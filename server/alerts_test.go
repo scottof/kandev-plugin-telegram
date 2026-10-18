@@ -319,3 +319,90 @@ func TestFlushAlerts_AllUsersForbiddenStillMarksSent(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, map[string]bool{"i1": true}, sent, "a 403 will not heal by retrying")
 }
+
+func badRequest(description string) error {
+	return &telegramAPIError{Method: "sendMessage", Code: 400, Description: description}
+}
+
+func TestFlushAlerts_PermanentClientErrorSettlesAndIsRecorded(t *testing.T) {
+	ctx := context.Background()
+	b, host, tg := newAlertBot(t)
+	tg.sendErr = badRequest("Bad Request: chat not found")
+	host.setPending(permission("i1", "task-1", "x"))
+	b.enqueue(alert{Kind: alertCompleted, TaskID: "task-2", TaskTitle: "Add cache"})
+
+	b.flushAlerts(ctx)
+	sent, err := b.store.sentInteractions(ctx)
+	require.NoError(t, err)
+	require.Equal(t, map[string]bool{"i1": true}, sent, "a 400 will not heal by retrying")
+	require.Empty(t, b.drainQueued(), "a settled task alert is not requeued")
+
+	attempts := tg.sendAttempts()
+	b.flushAlerts(ctx)
+	require.Equal(t, attempts, tg.sendAttempts(), "nothing is retried on the next cycle")
+
+	status, err := b.store.botStatus(ctx)
+	require.NoError(t, err)
+	require.Contains(t, status.AlertError, "400 Bad Request: chat not found")
+	require.NotContains(t, status.AlertError, testToken)
+}
+
+func TestFlushAlerts_TooManyRequestsIsRetried(t *testing.T) {
+	ctx := context.Background()
+	b, host, tg := newAlertBot(t)
+	tg.sendErr = &telegramAPIError{Method: "sendMessage", Code: 429, Description: "Too Many Requests", RetryAfter: 3}
+	host.setPending(permission("i1", "task-1", "x"))
+	b.flushAlerts(ctx)
+	sent, err := b.store.sentInteractions(ctx)
+	require.NoError(t, err)
+	require.Empty(t, sent, "a 429 is worth retrying")
+}
+
+func TestFlushAlerts_RejectedButtonFallsBackToPlainMessage(t *testing.T) {
+	ctx := context.Background()
+	b, host, tg := newAlertBot(t)
+	tg.sendErrWithButtons = badRequest("Bad Request: inline keyboard button URL is invalid")
+	host.setPending(permission("i1", "task-1", "Run npm test"))
+
+	b.flushAlerts(ctx)
+	msgs := tg.sentMessages()
+	require.Len(t, msgs, 1)
+	require.Equal(t, "Needs permission: Fix login\nRun npm test (execute)", msgs[0].Msg.Text)
+	require.Empty(t, msgs[0].Msg.Buttons)
+	require.Equal(t, 2, tg.sendAttempts(), "the plain message is tried exactly once")
+
+	sent, err := b.store.sentInteractions(ctx)
+	require.NoError(t, err)
+	require.Equal(t, map[string]bool{"i1": true}, sent)
+	status, err := b.store.botStatus(ctx)
+	require.NoError(t, err)
+	require.Contains(t, status.AlertError, "button URL is invalid")
+}
+
+func TestFlushAlerts_RejectedFallbackSettles(t *testing.T) {
+	ctx := context.Background()
+	b, host, tg := newAlertBot(t)
+	tg.sendErr = badRequest("Bad Request: message is too long")
+	host.setPending(permission("i1", "task-1", "x"))
+
+	b.flushAlerts(ctx)
+	require.Equal(t, 2, tg.sendAttempts(), "one try with the button, one without")
+	sent, err := b.store.sentInteractions(ctx)
+	require.NoError(t, err)
+	require.Equal(t, map[string]bool{"i1": true}, sent)
+}
+
+func TestFlushAlerts_SuccessClearsAlertError(t *testing.T) {
+	ctx := context.Background()
+	b, host, tg := newAlertBot(t)
+	tg.sendErr = badRequest("Bad Request: chat not found")
+	host.setPending(permission("i1", "task-1", "x"))
+	b.flushAlerts(ctx)
+
+	tg.sendErr = nil
+	host.setPending(permission("i2", "task-1", "y"))
+	b.flushAlerts(ctx)
+	status, err := b.store.botStatus(ctx)
+	require.NoError(t, err)
+	require.Empty(t, status.AlertError)
+}

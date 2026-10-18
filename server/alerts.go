@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"time"
 
@@ -161,27 +162,55 @@ func (b *bot) taskTitle(ctx context.Context, taskID string, cache map[string]str
 }
 
 // broadcast sends msg to every allowed user and reports whether the alert is
-// settled: false only when every send failed with an error worth retrying. A
-// user who never sent /start gets a 403, which retrying will not fix.
+// settled: false only when every send failed with an error worth retrying.
+// Telegram rejections other than 429 (a user who never sent /start, a button
+// URL it refuses) will not heal, so they settle and show in the status card.
 func (b *bot) broadcast(ctx context.Context, msg outMessage) bool {
 	if len(b.cfg.AllowedUserIDs) == 0 {
 		return true
 	}
 	settled := false
+	var rejected string
 	for _, userID := range b.cfg.AllowedUserIDs {
-		err := b.tg.SendMessage(ctx, userID, msg, 0)
+		degraded, err := b.sendAlert(ctx, userID, msg)
 		switch {
 		case err == nil:
 			settled = true
+			if degraded != nil {
+				rejected = fmt.Sprintf("alert to user %d sent without links: %v", userID, degraded)
+			}
 		case ctx.Err() != nil:
-		case isForbidden(err):
+		case isPermanent(err):
 			settled = true
-			log.Printf("telegram: user %d has not started the bot or blocked it", userID)
+			rejected = fmt.Sprintf("alert to user %d: %v", userID, err)
+			if isForbidden(err) {
+				log.Printf("telegram: user %d has not started the bot or blocked it", userID)
+			} else {
+				log.Printf("telegram: %s", rejected)
+			}
 		default:
 			log.Printf("telegram: sending alert: %v", err)
 		}
 	}
+	if settled {
+		b.updateStatus(ctx, func(st *botStatus) { st.AlertError = rejected })
+	}
 	return settled
+}
+
+// sendAlert sends msg to one user. When Telegram rejects the message with
+// 400 and it has URL buttons, the buttons are the likely cause (for example a
+// loopback kandev_url), so the text goes out once more without them; degraded
+// is then the original rejection. A 400 from that retry is returned as err.
+func (b *bot) sendAlert(ctx context.Context, userID int64, msg outMessage) (degraded, err error) {
+	err = b.tg.SendMessage(ctx, userID, msg, 0)
+	if err == nil || !isBadRequest(err) || len(msg.Buttons) == 0 {
+		return nil, err
+	}
+	if plainErr := b.tg.SendMessage(ctx, userID, outMessage{Text: msg.Text}, 0); plainErr != nil {
+		return nil, plainErr
+	}
+	return err, nil
 }
 
 // taskAlertFromEvent maps a task.state_changed payload to an alert. Every

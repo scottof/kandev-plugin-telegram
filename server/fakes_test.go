@@ -325,8 +325,11 @@ type fakeTelegram struct {
 	sent      []sentMessage
 	sendErr   error
 	sendErrTo map[int64]error
-	onSend    func()
-	onDrained func()
+	// sendErrWithButtons fails only messages that carry URL buttons.
+	sendErrWithButtons error
+	attempts           int
+	onSend             func()
+	onDrained          func()
 }
 
 type fakeUpdatesResult struct {
@@ -383,9 +386,13 @@ func (f *fakeTelegram) GetUpdates(ctx context.Context, offset int64, _ int) ([]t
 func (f *fakeTelegram) SendMessage(_ context.Context, chatID int64, msg outMessage, replyTo int64) error {
 	f.mu.Lock()
 	hook := f.onSend
+	f.attempts++
 	err := f.sendErr
 	if e, ok := f.sendErrTo[chatID]; ok {
 		err = e
+	}
+	if err == nil && len(msg.Buttons) > 0 {
+		err = f.sendErrWithButtons
 	}
 	if err == nil {
 		f.sent = append(f.sent, sentMessage{ChatID: chatID, Msg: msg, ReplyTo: replyTo})
@@ -401,6 +408,12 @@ func (f *fakeTelegram) sentMessages() []sentMessage {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]sentMessage(nil), f.sent...)
+}
+
+func (f *fakeTelegram) sendAttempts() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.attempts
 }
 
 func (f *fakeTelegram) offsets() []int64 {

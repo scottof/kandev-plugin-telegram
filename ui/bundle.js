@@ -69,6 +69,7 @@ function detailRows(h, data) {
   if (data.config_error) rows.push(line(`Settings error: ${data.config_error}`));
   for (const warning of data.warnings || []) rows.push(line(`Warning: ${warning}`));
   if (data.last_error) rows.push(line(`Last error: ${data.last_error}`));
+  if (data.alert_error) rows.push(line(`Last refused alert: ${data.alert_error}`));
   return rows;
 }
 

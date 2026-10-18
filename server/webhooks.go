@@ -63,6 +63,7 @@ func (p *telegramPlugin) statusWebhook(ctx context.Context, host pluginsdk.Host)
 		body["username"] = st.Username
 		body["last_update_at"] = st.LastUpdateAt
 		body["last_error"] = st.LastError
+		body["alert_error"] = st.AlertError
 	}
 	return jsonResponse(http.StatusOK, body)
 }

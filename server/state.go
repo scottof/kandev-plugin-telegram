@@ -150,6 +150,9 @@ type botStatus struct {
 	Username     string `json:"username"`
 	LastUpdateAt string `json:"last_update_at"`
 	LastError    string `json:"last_error"`
+	// AlertError is the last alert Telegram refused for good. It is kept
+	// apart from LastError, which every successful poll clears.
+	AlertError string `json:"alert_error"`
 }
 
 func (s stateStore) botStatus(ctx context.Context) (botStatus, error) {
@@ -162,6 +165,7 @@ func (s stateStore) botStatus(ctx context.Context) (botStatus, error) {
 	st.Username, _ = value["username"].(string)
 	st.LastUpdateAt, _ = value["last_update_at"].(string)
 	st.LastError, _ = value["last_error"].(string)
+	st.AlertError, _ = value["alert_error"].(string)
 	return st, nil
 }
 
@@ -171,5 +175,6 @@ func (s stateStore) setBotStatus(ctx context.Context, st botStatus) error {
 		"username":       st.Username,
 		"last_update_at": st.LastUpdateAt,
 		"last_error":     st.LastError,
+		"alert_error":    st.AlertError,
 	})
 }

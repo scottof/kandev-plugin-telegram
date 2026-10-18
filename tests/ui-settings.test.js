@@ -156,6 +156,13 @@ test("settings warnings are shown without blocking Test", async () => {
   assert.equal(buttonByText(tree, "Send test message").props.disabled, false);
 });
 
+test("a refused alert is shown in the card", async () => {
+  const { mod } = await loadPlugin();
+  const data = { configured: true, missing: [], running: true, connected: true, last_error: "", alert_error: "alert to user 42: telegram sendMessage: 400 Bad Request" };
+  const tree = mod.renderStatusCard(makeHost().host, { phase: "ready", data }, noop);
+  assert.match(textOf(tree), /Last refused alert: alert to user 42: telegram sendMessage: 400 Bad Request/);
+});
+
 test("loadStatus reads the status webhook and rejects on HTTP errors", async () => {
   const { mod } = await loadPlugin();
   const ok = makeHost({ "/webhooks/status": () => jsonResponse(200, { configured: true }) });

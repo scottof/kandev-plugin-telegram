@@ -94,6 +94,18 @@ func isUnauthorized(err error) bool {
 	return errors.As(err, &apiErr) && apiErr.Code == http.StatusUnauthorized
 }
 
+// isPermanent reports a Bot API rejection that retrying the same request
+// will not fix: any 4xx except 429, which carries retry_after.
+func isPermanent(err error) bool {
+	var apiErr *telegramAPIError
+	return errors.As(err, &apiErr) && apiErr.Code >= 400 && apiErr.Code < 500 && apiErr.Code != http.StatusTooManyRequests
+}
+
+func isBadRequest(err error) bool {
+	var apiErr *telegramAPIError
+	return errors.As(err, &apiErr) && apiErr.Code == http.StatusBadRequest
+}
+
 func isForbidden(err error) bool {
 	var apiErr *telegramAPIError
 	return errors.As(err, &apiErr) && apiErr.Code == http.StatusForbidden
