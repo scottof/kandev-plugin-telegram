@@ -80,6 +80,23 @@ func TestLoadConfig_RejectsKandevURLWithCredentialsQueryOrFragment(t *testing.T)
 	}
 }
 
+func TestLoadConfig_KandevURLErrorsNeverEchoTheValue(t *testing.T) {
+	cases := map[string]string{
+		"ftp://alice:hunter2@kandev.example":          "http or https",
+		"https://alice:hunter2@kandev.example":        "user name or password",
+		"https://kandev.example/?alice=hunter2":       "query string",
+		"https://kandev.example/#alice-hunter2":       "fragment",
+		"https://alice:hunter2@kandev.example/?x=1#y": "user name or password",
+	}
+	for raw, want := range cases {
+		_, err := loadConfig(map[string]any{"kandev_url": raw})
+		require.Error(t, err, raw)
+		require.Contains(t, err.Error(), want, raw)
+		require.NotContains(t, err.Error(), "alice", raw)
+		require.NotContains(t, err.Error(), "hunter2", raw)
+	}
+}
+
 func TestConfig_WarnsOnLoopbackKandevURL(t *testing.T) {
 	for _, raw := range []string{"http://localhost:3000", "http://127.0.0.1:3000/", "http://[::1]:3000", "http://LocalHost"} {
 		cfg, err := loadConfig(map[string]any{"kandev_url": raw})

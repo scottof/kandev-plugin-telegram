@@ -95,17 +95,24 @@ func parseKandevURL(raw string) (string, error) {
 	if raw == "" {
 		return "", nil
 	}
+	// Errors name what is wrong and never echo raw: it may carry credentials,
+	// and the message reaches the settings card and bot_status.
 	u, err := url.Parse(raw)
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-		return "", fmt.Errorf("kandev_url: %q must be an http(s) URL such as https://kandev.example", raw)
-	}
+	switch {
+	case err != nil:
+		return "", errors.New("kandev_url: is not a valid URL, use one such as https://kandev.example")
+	case u.Scheme != "http" && u.Scheme != "https":
+		return "", errors.New("kandev_url: the scheme must be http or https, such as https://kandev.example")
+	case u.Host == "":
+		return "", errors.New("kandev_url: must include a host, such as https://kandev.example")
 	// Credentials would end up in every alert button; a query or fragment
 	// would break the /t/<id> links appended to the base.
-	if u.User != nil {
+	case u.User != nil:
 		return "", errors.New("kandev_url: must not contain a user name or password")
-	}
-	if u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
-		return "", fmt.Errorf("kandev_url: %q must not contain a query string or fragment", raw)
+	case u.RawQuery != "" || u.ForceQuery:
+		return "", errors.New("kandev_url: must not contain a query string")
+	case u.Fragment != "" || strings.Contains(raw, "#"):
+		return "", errors.New("kandev_url: must not contain a fragment")
 	}
 	return strings.TrimRight(raw, "/"), nil
 }
