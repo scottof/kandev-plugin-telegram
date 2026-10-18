@@ -37,7 +37,7 @@ func (p *telegramPlugin) HandleWebhook(ctx context.Context, req *pluginsdk.Webho
 
 // statusWebhook reports configuration and connection state, never the token.
 func (p *telegramPlugin) statusWebhook(ctx context.Context, host pluginsdk.Host) *pluginsdk.WebhookResponse {
-	body := map[string]any{"configured": false, "missing": []string{}, "running": p.currentBot() != nil}
+	body := map[string]any{"configured": false, "missing": []string{}, "warnings": []string{}, "running": p.currentBot() != nil}
 
 	raw, err := host.GetConfig(ctx)
 	if err != nil {
@@ -52,6 +52,9 @@ func (p *telegramPlugin) statusWebhook(ctx context.Context, host pluginsdk.Host)
 		body["missing"] = missing
 		body["configured"] = len(missing) == 0
 		body["allowed_users"] = len(cfg.AllowedUserIDs)
+		if warnings := cfg.warnings(); warnings != nil {
+			body["warnings"] = warnings
+		}
 	}
 
 	st, err := stateStore{host: host}.botStatus(ctx)

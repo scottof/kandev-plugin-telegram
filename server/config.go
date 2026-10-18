@@ -1,7 +1,9 @@
 package main
 
 import (
+	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"strconv"
 	"strings"
@@ -97,7 +99,32 @@ func parseKandevURL(raw string) (string, error) {
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		return "", fmt.Errorf("kandev_url: %q must be an http(s) URL such as https://kandev.example", raw)
 	}
+	// Credentials would end up in every alert button; a query or fragment
+	// would break the /t/<id> links appended to the base.
+	if u.User != nil {
+		return "", errors.New("kandev_url: must not contain a user name or password")
+	}
+	if u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
+		return "", fmt.Errorf("kandev_url: %q must not contain a query string or fragment", raw)
+	}
 	return strings.TrimRight(raw, "/"), nil
+}
+
+// warnings lists settings that are valid but probably not what the operator
+// wants. They are shown in the status card, never treated as errors.
+func (c config) warnings() []string {
+	if c.KandevURL == "" {
+		return nil
+	}
+	u, err := url.Parse(c.KandevURL)
+	if err != nil {
+		return nil
+	}
+	host := u.Hostname()
+	if ip := net.ParseIP(host); strings.EqualFold(host, "localhost") || (ip != nil && ip.IsLoopback()) {
+		return []string{"kandev_url points at this computer, so links will not open on a phone and Telegram may refuse the alert buttons. Use an address the phone can reach, such as a Tailscale name."}
+	}
+	return nil
 }
 
 func configString(raw map[string]any, key string) string {

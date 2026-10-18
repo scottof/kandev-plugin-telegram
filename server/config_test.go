@@ -66,6 +66,35 @@ func TestLoadConfig_RejectsInvalidKandevURL(t *testing.T) {
 	}
 }
 
+func TestLoadConfig_RejectsKandevURLWithCredentialsQueryOrFragment(t *testing.T) {
+	for _, raw := range []string{
+		"https://user:s3cret@kandev.example",
+		"https://user@kandev.example",
+		"https://kandev.example/?tab=1",
+		"https://kandev.example/#inbox",
+	} {
+		_, err := loadConfig(map[string]any{"kandev_url": raw})
+		require.Error(t, err, raw)
+		require.Contains(t, err.Error(), "kandev_url")
+		require.NotContains(t, err.Error(), "s3cret", "the error never echoes credentials")
+	}
+}
+
+func TestConfig_WarnsOnLoopbackKandevURL(t *testing.T) {
+	for _, raw := range []string{"http://localhost:3000", "http://127.0.0.1:3000/", "http://[::1]:3000", "http://LocalHost"} {
+		cfg, err := loadConfig(map[string]any{"kandev_url": raw})
+		require.NoError(t, err, raw)
+		warnings := cfg.warnings()
+		require.Len(t, warnings, 1, raw)
+		require.Contains(t, warnings[0], "kandev_url")
+	}
+	for _, raw := range []string{"", "https://kandev.tail.ts.net", "http://192.168.1.20:3000"} {
+		cfg, err := loadConfig(map[string]any{"kandev_url": raw})
+		require.NoError(t, err, raw)
+		require.Empty(t, cfg.warnings(), raw)
+	}
+}
+
 func TestConfig_IsAllowed(t *testing.T) {
 	cfg := config{AllowedUserIDs: []int64{42}}
 	require.True(t, cfg.isAllowed(42))

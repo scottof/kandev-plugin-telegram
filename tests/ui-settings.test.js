@@ -147,6 +147,15 @@ test("a stale connected flag is not shown as connected when the bot is not runni
   assert.match(textOf(tree), /Last error: telegram getMe: 401 Unauthorized/);
 });
 
+test("settings warnings are shown without blocking Test", async () => {
+  const { mod } = await loadPlugin();
+  const data = { configured: true, missing: [], running: true, connected: true, warnings: ["kandev_url points at this computer"] };
+  const tree = mod.renderStatusCard(makeHost().host, { phase: "ready", data }, noop);
+  assert.equal(textOf(findAll(tree, (n) => n.type === "Badge")[0]), "Connected");
+  assert.match(textOf(tree), /Warning: kandev_url points at this computer/);
+  assert.equal(buttonByText(tree, "Send test message").props.disabled, false);
+});
+
 test("loadStatus reads the status webhook and rejects on HTTP errors", async () => {
   const { mod } = await loadPlugin();
   const ok = makeHost({ "/webhooks/status": () => jsonResponse(200, { configured: true }) });

@@ -115,6 +115,10 @@ func (p *telegramPlugin) run(ctx context.Context, host pluginsdk.Host) {
 		return
 	}
 
+	for _, warning := range cfg.warnings() {
+		log.Printf("telegram: %s", warning)
+	}
+
 	tg := p.newClient(cfg.BotToken)
 	me, ok := p.connect(ctx, tg, store)
 	if !ok {

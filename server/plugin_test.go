@@ -162,6 +162,20 @@ func TestWebhookStatus_Running(t *testing.T) {
 	require.Equal(t, "kandev_bot", body["username"])
 	require.Equal(t, "2026-10-18T10:00:00Z", body["last_update_at"])
 	require.InEpsilon(t, float64(1), body["allowed_users"], 0)
+	require.Equal(t, []any{}, body["warnings"])
+}
+
+func TestWebhookStatus_WarnsOnLoopbackKandevURL(t *testing.T) {
+	host := newFakeHost()
+	host.config = validConfig()
+	host.config["kandev_url"] = "http://localhost:3000"
+	p := &telegramPlugin{}
+	p.UnimplementedPlugin.SetHost(host)
+	_, body := webhook(t, p, "status", "GET")
+	require.Equal(t, true, body["configured"], "a loopback URL is a warning, not an error")
+	warnings, _ := body["warnings"].([]any)
+	require.Len(t, warnings, 1)
+	require.Contains(t, warnings[0], "kandev_url")
 }
 
 func TestWebhookStatus_NoHost(t *testing.T) {
