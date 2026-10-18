@@ -95,12 +95,8 @@ make check-format
 make vet
 make test-backend     # Go tests against a fake Host and a fake Telegram client, no network
 npm run test:ui       # node --test for ui/bundle.js
-make verify-package
+make verify-package-host   # host platform only; make verify-package builds all five
 ```
-
-`make verify-package-host` currently fails at the pinned SDK: `plugin-pack -platform-only` rewrites `manifest.yaml`
-with a single executable, and `scripts/verify-package.sh` expects all five. Use `make verify-package` until that is
-fixed.
 
 `docs/SMOKE.md` is the manual check against a real kandev and a real bot.
 

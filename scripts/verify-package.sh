@@ -19,11 +19,17 @@ for required in manifest.yaml ui/bundle.js checksums.txt; do
 	[ -f "$package_dir/$required" ] || fail "missing required file: $required"
 done
 
+# Indentation and quoting are not fixed: plugin-pack -platform-only re-encodes
+# the manifest with its YAML encoder (four-space indent, unquoted values).
 manifest_executables=$(awk '
 	$0 == "runtime:" { in_runtime = 1; next }
-	in_runtime && $0 == "  executables:" { in_executables = 1; next }
-	in_executables && $0 !~ /^    / { exit }
-	in_executables && /^    [[:alnum:]_-]+: "[^\"]+"$/ {
+	in_runtime && /^[^ #]/ { exit }
+	in_runtime && /^ +executables:$/ { in_executables = 1; match($0, /^ +/); indent = RLENGTH; next }
+	in_executables {
+		match($0, /^ */)
+		if (RLENGTH <= indent) { in_executables = 0; next }
+	}
+	in_executables && /^ +[[:alnum:]_-]+: "?[^" ]+"?$/ {
 		platform = $1
 		sub(/:$/, "", platform)
 		path = $2
@@ -37,16 +43,21 @@ expected_executables=$(printf '%s\n' \
 	'linux-amd64 server/plugin-linux-amd64' \
 	'linux-arm64 server/plugin-linux-arm64' \
 	'windows-amd64 server/plugin-windows-amd64.exe' | LC_ALL=C sort)
-[ "$manifest_executables" = "$expected_executables" ] || fail 'manifest runtime.executables does not match the supported platform set'
 
 case "$mode" in
 	full)
+		[ "$manifest_executables" = "$expected_executables" ] || fail 'manifest runtime.executables does not match the supported platform set'
 		executable_paths=$(printf '%s\n' "$manifest_executables" | awk '{ print $2 }')
 		;;
 	host)
 		[ -n "$host_platform" ] || fail 'host mode requires a platform name'
-		executable_paths=$(printf '%s\n' "$manifest_executables" | awk -v platform="$host_platform" '$1 == platform { print $2 }')
-		[ -n "$executable_paths" ] || fail "host platform is not declared: $host_platform"
+		expected_host=$(printf '%s\n' "$expected_executables" | awk -v platform="$host_platform" '$1 == platform')
+		[ -n "$expected_host" ] || fail "host platform is not declared: $host_platform"
+		# Either the source manifest (every platform) or the -platform-only
+		# rewrite (exactly the host platform).
+		[ "$manifest_executables" = "$expected_executables" ] || [ "$manifest_executables" = "$expected_host" ] ||
+			fail 'manifest runtime.executables does not match the supported platform set'
+		executable_paths=$(printf '%s\n' "$expected_host" | awk '{ print $2 }')
 		;;
 	*)
 		fail "unknown verification mode: $mode"

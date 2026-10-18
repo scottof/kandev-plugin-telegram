@@ -82,6 +82,32 @@ done
 write_checksums "$host_fixture"
 sh "$verify_script" "$host_fixture" host "$host_platform" >/dev/null
 
+# plugin-pack -platform-only rewrites the manifest with four-space indentation,
+# unquoted values and only the host platform.
+write_packed_host_manifest() {
+	fixture=$1
+	shift
+	{
+		printf 'id: example\nruntime:\n    type: binary\n    executables:\n'
+		for entry in "$@"; do
+			printf '        %s\n' "$entry"
+		done
+		printf 'min_kandev_version: 0.97.0\n'
+	} > "$fixture/manifest.yaml"
+	write_checksums "$fixture"
+}
+cp -R "$host_fixture" "$test_dir/host-packed"
+write_packed_host_manifest "$test_dir/host-packed" "$host_platform: $host_executable"
+sh "$verify_script" "$test_dir/host-packed" host "$host_platform" >/dev/null
+
+cp -R "$host_fixture" "$test_dir/host-packed-foreign"
+write_packed_host_manifest "$test_dir/host-packed-foreign" "freebsd-amd64: $host_executable"
+expect_failure 'a packed manifest for another platform' "$test_dir/host-packed-foreign" host "$host_platform"
+
+cp -R "$host_fixture" "$test_dir/host-packed-extra"
+write_packed_host_manifest "$test_dir/host-packed-extra" "$host_platform: $host_executable" "linux-riscv64: server/plugin-linux-riscv64"
+expect_failure 'a packed manifest with an undeclared platform' "$test_dir/host-packed-extra" host "$host_platform"
+
 for required in manifest.yaml ui/bundle.js \
 	server/plugin-linux-amd64 server/plugin-linux-arm64 \
 	server/plugin-darwin-amd64 server/plugin-darwin-arm64 \
@@ -106,7 +132,7 @@ sed '/  ui\/bundle.js$/d' "$test_dir/incomplete-checksums/checksums.txt" > "$tes
 mv "$test_dir/incomplete-checksums/checksums.next" "$test_dir/incomplete-checksums/checksums.txt"
 expect_failure 'an omitted checksum entry' "$test_dir/incomplete-checksums"
 
-for forbidden in recipes/source-control/README.md package.json package-lock.json tsconfig.recipes.json scripts/verify-package.sh; do
+for forbidden in node_modules/example/index.js package.json package-lock.json tsconfig.recipes.json scripts/verify-package.sh; do
 	copy_fixture "forbidden-${forbidden##*/}"
 	fixture=$test_dir/forbidden-${forbidden##*/}
 	mkdir -p "$fixture/$(dirname "$forbidden")"
