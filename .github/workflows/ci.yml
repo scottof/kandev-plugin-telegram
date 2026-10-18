@@ -55,7 +55,7 @@ jobs:
           cache: npm
           cache-dependency-path: plugin/package-lock.json
 
-      - name: Install recipe test dependencies
+      - name: Install UI test dependencies
         working-directory: plugin
         run: npm ci --ignore-scripts
 

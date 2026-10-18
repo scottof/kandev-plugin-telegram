@@ -1,11 +1,11 @@
-.PHONY: build run test test-backend test-recipes test-ui test-package-verifier \
-	test-release-version typecheck-recipes audit-recipes check-format fmt vet \
+.PHONY: build run test test-backend test-ui test-package-verifier \
+	test-release-version audit-recipes check-format fmt vet \
 	package package-host package-file verify-package verify-package-host clean
 
 # When you rename the plugin, update BIN and VERSION to match manifest.yaml's
 # id and version (PKG_OUT is derived from them).
-BIN := bin/kandev-plugin-template
-VERSION := 0.2.0
+BIN := bin/kandev-plugin-telegram
+VERSION := 0.1.0
 STAGE := .build/stage
 PKG_OUT := $(notdir $(BIN))-$(VERSION).tar.gz
 
@@ -16,7 +16,7 @@ PKG_OUT := $(notdir $(BIN))-$(VERSION).tar.gz
 # work, but the second resolves plugin-pack's dependencies against *this*
 # module's go.sum — and plugin-pack imports far more of the kandev backend
 # than server/ does, so those entries are absent and packaging dies with
-# "missing go.sum entry". Adding them would mean this template's go.sum has to
+# "missing go.sum entry". Adding them would mean this plugin's go.sum has to
 # track every dependency the kandev backend grows, which `go mod tidy` then
 # fights over. Building it where it lives sidesteps all of that.
 KANDEV_SDK := ../kandev/apps/backend
@@ -33,13 +33,10 @@ build:
 run: build
 	./$(BIN)
 
-test: test-backend typecheck-recipes test-recipes test-ui test-package-verifier test-release-version
+test: test-backend test-ui test-package-verifier test-release-version
 
 test-backend:
-	go test ./server/... ./recipes/source-control/server/...
-
-test-recipes:
-	npm run test:recipes
+	go test ./server/...
 
 test-ui:
 	npm run test:ui
@@ -50,9 +47,7 @@ test-package-verifier:
 test-release-version:
 	sh scripts/test-verify-release-version.sh
 
-typecheck-recipes:
-	npm run typecheck:recipes
-
+## Kept under this name because the release workflow calls it.
 audit-recipes:
 	npm audit --audit-level=high
 
@@ -63,7 +58,7 @@ check-format:
 	@test -z "$$(gofmt -l .)" || { echo "gofmt needed:"; gofmt -l .; exit 1; }
 
 vet:
-	go vet ./server/... ./recipes/source-control/server/...
+	go vet ./server/...
 
 ## Cross-compile server/plugin-<goos>-<goarch>[.exe] for every platform in
 ## manifest.yaml's runtime.executables, stage manifest.yaml + ui/ alongside
@@ -97,8 +92,8 @@ package-host:
 	@echo "Wrote $(PKG_OUT)"
 
 ## Build and validate the all-platform archive: plugin-pack checks the manifest;
-## this additionally verifies checksums, expected binaries, and that opt-in
-## recipe/development files did not leak into the generated starter package.
+## this additionally verifies checksums, expected binaries, and that
+## development files did not leak into the package.
 verify-package: package
 	@set -eu; \
 		tmp="$$(mktemp -d)"; \
