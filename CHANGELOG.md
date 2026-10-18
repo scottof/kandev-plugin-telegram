@@ -1,6 +1,24 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Telegram bot over long polling, configured from Settings > Plugins: bot token, allowed user ids, kandev URL,
+  triage agent profile, start agent, and alert toggles.
+- Alerts with a task link when an agent waits for a permission or an answer, and when a task is completed, fails to
+  start or (opt-in) moves to review. Bursts are batched into one message, and a restart never repeats an alert.
+- `/new <text>` files a task through the triage agent, with the replied-to message as context.
+- `/status` lists running tasks and agents waiting on you.
+- Settings page status card with a test message button.
+
+### Removed
+
+- The template's source-control recipe, demo page, composer action, ping webhook and demo settings.
+
 ## [0.2.0] - 2026-10-05
+
+Template release this plugin started from (`kdlbs/kandev-plugin-template`).
 
 ### Changed
 
@@ -14,4 +32,3 @@
 - docs: describe release checksums.txt as advisory, not index-pinned (2c5fd80)
 - ci: add release workflow that publishes package + checksums on tag (a25f3d3)
 - chore: scaffold kandev plugin template (526ca58)
-
