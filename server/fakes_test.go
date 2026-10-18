@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"slices"
 	"sort"
@@ -11,10 +10,11 @@ import (
 	"time"
 
 	"github.com/kandev/kandev/pkg/pluginsdk"
+	"google.golang.org/protobuf/types/known/structpb"
 )
 
 // fakeHost is an in-memory pluginsdk.Host. SetState round-trips values through
-// JSON like the real Host's protobuf Struct, so numbers come back as float64.
+// a protobuf Struct like the real Host.
 type fakeHost struct {
 	pluginsdk.UnimplementedHostData
 	mu     sync.Mutex
@@ -39,9 +39,13 @@ func (h *fakeHost) GetState(_ context.Context, scope, scopeID, key string) (map[
 }
 
 func (h *fakeHost) SetState(_ context.Context, scope, scopeID, key string, value map[string]any) error {
+	stored, err := structRoundTrip(value)
+	if err != nil {
+		return err
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.state[fakeStateKey(scope, scopeID, key)] = jsonRoundTrip(value)
+	h.state[fakeStateKey(scope, scopeID, key)] = stored
 	return nil
 }
 
@@ -402,14 +406,12 @@ func (f *fakeTelegram) offsets() []int64 {
 
 var _ telegramClient = (*fakeTelegram)(nil)
 
-func jsonRoundTrip(v map[string]any) map[string]any {
-	data, err := json.Marshal(v)
+// structRoundTrip converts through structpb like the real Host: it rejects
+// Go types such as []string, and numbers come back as float64.
+func structRoundTrip(v map[string]any) (map[string]any, error) {
+	st, err := structpb.NewStruct(v)
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
-	var out map[string]any
-	if err := json.Unmarshal(data, &out); err != nil {
-		panic(err)
-	}
-	return out
+	return st.AsMap(), nil
 }

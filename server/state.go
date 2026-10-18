@@ -72,11 +72,16 @@ func (s stateStore) sentInteractions(ctx context.Context) (map[string]bool, erro
 }
 
 func (s stateStore) setSentInteractions(ctx context.Context, sent map[string]bool) error {
-	ids := make([]string, 0, len(sent))
+	sorted := make([]string, 0, len(sent))
 	for id := range sent {
-		ids = append(ids, id)
+		sorted = append(sorted, id)
 	}
-	sort.Strings(ids)
+	sort.Strings(sorted)
+	// Host state goes through structpb, which accepts []any but not []string.
+	ids := make([]any, len(sorted))
+	for i, id := range sorted {
+		ids[i] = id
+	}
 	return s.set(ctx, stateKeySentInteractions, map[string]any{"ids": ids})
 }
 
