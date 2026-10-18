@@ -161,6 +161,49 @@ func TestHTTPTelegram_GivesUpAfterSecond429(t *testing.T) {
 	require.Len(t, stub.recorded(), 2)
 }
 
+func TestHTTPTelegram_RetryAfterHoldsEveryLaterCall(t *testing.T) {
+	stub, srv := newStubTelegram(t)
+	clk := newFakeClock()
+	var mu sync.Mutex
+	var at []time.Time
+	stub.handlers["sendMessage"] = func(map[string]any) (int, string) {
+		mu.Lock()
+		defer mu.Unlock()
+		at = append(at, clk.Now())
+		if len(at) <= 2 {
+			return 429, `{"ok":false,"error_code":429,"description":"Too Many Requests","parameters":{"retry_after":30}}`
+		}
+		return 200, `{"ok":true,"result":{"message_id":1,"date":1,"chat":{"id":43,"type":"private"}}}`
+	}
+	client := newTestClient(srv, clk)
+	require.Error(t, client.SendMessage(context.Background(), 42, outMessage{Text: "hi"}, 0))
+	require.NoError(t, client.SendMessage(context.Background(), 43, outMessage{Text: "hi"}, 0))
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.Len(t, at, 3)
+	require.GreaterOrEqual(t, at[1].Sub(at[0]), 30*time.Second)
+	require.GreaterOrEqual(t, at[2].Sub(at[1]), 30*time.Second, "a later call waits out the last retry_after")
+}
+
+func TestHTTPTelegram_RetryAfterIsNotWaitedOnceItHasPassed(t *testing.T) {
+	stub, srv := newStubTelegram(t)
+	clk := newFakeClock()
+	calls := 0
+	stub.handlers["sendMessage"] = func(map[string]any) (int, string) {
+		calls++
+		if calls == 1 {
+			return 429, `{"ok":false,"error_code":429,"description":"Too Many Requests","parameters":{"retry_after":5}}`
+		}
+		return 200, `{"ok":true,"result":{"message_id":1,"date":1,"chat":{"id":42,"type":"private"}}}`
+	}
+	client := newTestClient(srv, clk)
+	require.NoError(t, client.SendMessage(context.Background(), 42, outMessage{Text: "hi"}, 0))
+	clk.advance(time.Minute)
+	require.NoError(t, client.SendMessage(context.Background(), 42, outMessage{Text: "hi"}, 0))
+	require.Equal(t, []time.Duration{5 * time.Second}, clk.sleeps())
+}
+
 func TestHTTPTelegram_APIErrorNeverLeaksToken(t *testing.T) {
 	stub, srv := newStubTelegram(t)
 	stub.handlers["getUpdates"] = func(map[string]any) (int, string) {

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -117,6 +118,11 @@ type httpTelegram struct {
 	token   string
 	http    *http.Client
 	clock   clock
+
+	// holdUntil is when the last 429 retry_after ends; no call goes out
+	// before it, whatever the method or chat.
+	holdMu    sync.Mutex
+	holdUntil time.Time
 }
 
 func newHTTPTelegram(token string) *httpTelegram {
@@ -174,15 +180,39 @@ func (c *httpTelegram) SendMessage(ctx context.Context, chatID int64, msg outMes
 
 // call performs one Bot API method, retrying once after a 429 retry_after.
 func (c *httpTelegram) call(ctx context.Context, method string, req, result any, timeout time.Duration) error {
-	err := c.do(ctx, method, req, result, timeout)
-	var apiErr *telegramAPIError
-	if errors.As(err, &apiErr) && apiErr.Code == http.StatusTooManyRequests && apiErr.RetryAfter > 0 {
-		if sleepErr := c.clock.Sleep(ctx, time.Duration(apiErr.RetryAfter)*time.Second); sleepErr != nil {
-			return sleepErr
+	for attempt := 0; ; attempt++ {
+		if err := c.waitForHold(ctx); err != nil {
+			return err
 		}
-		err = c.do(ctx, method, req, result, timeout)
+		err := c.do(ctx, method, req, result, timeout)
+		var apiErr *telegramAPIError
+		if !errors.As(err, &apiErr) || apiErr.Code != http.StatusTooManyRequests || apiErr.RetryAfter <= 0 {
+			return err
+		}
+		c.hold(time.Duration(apiErr.RetryAfter) * time.Second)
+		if attempt > 0 {
+			return err
+		}
 	}
-	return err
+}
+
+func (c *httpTelegram) hold(d time.Duration) {
+	until := c.clock.Now().Add(d)
+	c.holdMu.Lock()
+	defer c.holdMu.Unlock()
+	if until.After(c.holdUntil) {
+		c.holdUntil = until
+	}
+}
+
+func (c *httpTelegram) waitForHold(ctx context.Context) error {
+	c.holdMu.Lock()
+	until := c.holdUntil
+	c.holdMu.Unlock()
+	if wait := until.Sub(c.clock.Now()); wait > 0 {
+		return c.clock.Sleep(ctx, wait)
+	}
+	return nil
 }
 
 type tgResponse struct {

@@ -30,17 +30,31 @@ func (b *bot) alertLoop(ctx context.Context) {
 	for {
 		b.flushAlerts(ctx)
 		timer := time.NewTimer(b.reconcileEvery)
+		ok := b.waitForFlush(ctx, timer.C)
+		timer.Stop()
+		if !ok {
+			return
+		}
+	}
+}
+
+// waitForFlush blocks until the next flush is due: the reconcile tick, or a
+// wake. After a flush that left a retryable failure, wakes are ignored until
+// retryAt, so events arriving during an outage do not turn the 15 second
+// retry into one every debounce. ok is false when ctx ends.
+func (b *bot) waitForFlush(ctx context.Context, tick <-chan time.Time) bool {
+	for {
 		select {
 		case <-ctx.Done():
-			timer.Stop()
-			return
-		case <-timer.C:
+			return false
+		case <-tick:
+			return true
 		case <-b.wake:
-			timer.Stop()
-			// Give a burst of events a moment to arrive so it goes out as one message.
-			if b.clock.Sleep(ctx, b.debounce) != nil {
-				return
+			if b.clock.Now().Before(b.retryAt) {
+				continue
 			}
+			// Give a burst of events a moment to arrive so it goes out as one message.
+			return b.clock.Sleep(ctx, b.debounce) == nil
 		}
 	}
 }
@@ -145,8 +159,10 @@ func capQueue(queue []queuedTaskAlert) []queuedTaskAlert {
 // settled on delivery or on a permanent Telegram rejection; a retryable
 // failure for one user leaves the others untouched. Interactions are marked
 // sent after the send attempt: a crash in between repeats an alert rather
-// than losing it. retry reports a retryable failure for at least one user.
-func (b *bot) flushAlerts(ctx context.Context) (retry bool) {
+// than losing it. A retryable failure for any user sets retryAt one reconcile
+// interval ahead.
+func (b *bot) flushAlerts(ctx context.Context) {
+	retry := false
 	pending, stored, err := b.interactionState(ctx)
 	if err != nil && ctx.Err() == nil {
 		log.Printf("telegram: reconciling pending interactions: %v", err)
@@ -201,6 +217,9 @@ func (b *bot) flushAlerts(ctx context.Context) (retry bool) {
 	if anySettled {
 		b.updateStatus(ctx, func(st *botStatus) { st.AlertError = rejected })
 	}
+	if retry {
+		b.retryAt = b.clock.Now().Add(b.reconcileEvery)
+	}
 
 	if len(queued) > 0 {
 		if err := b.settleQueued(ctx); err != nil && ctx.Err() == nil {
@@ -215,7 +234,6 @@ func (b *bot) flushAlerts(ctx context.Context) (retry bool) {
 			}
 		}
 	}
-	return retry
 }
 
 // interactionState returns the pending interactions and the stored sent set.

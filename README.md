@@ -54,7 +54,8 @@ Requires kandev 0.95.0 or newer.
     read from the durable list.
 - A burst of alerts is sent as one message with up to ten task buttons.
 - During a Telegram outage, alerts wait in plugin state and go out on the next 15 second cycle, so a restart does not
-  lose them. Up to 50 task alerts wait; older ones are dropped. If Telegram refuses an alert for good (for example a
+  lose them. New kandev events do not make the bot retry sooner. When Telegram asks the bot to slow down (HTTP 429),
+  nothing is sent to Telegram until the wait it names has passed. Up to 50 task alerts wait; older ones are dropped. If Telegram refuses an alert for good (for example a
   link button it will not accept), the bot sends it once without buttons, and the status card shows the last refused
   alert.
 - Delivery is tracked per allowed user. A user Telegram cannot reach (for example one who never sent `/start`) does not

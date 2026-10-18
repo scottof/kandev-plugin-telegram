@@ -30,6 +30,9 @@ type bot struct {
 	// settledMemo is the users each queued task alert is settled for, kept in
 	// case the queue write failed. Only the alert loop touches it.
 	settledMemo map[taskAlertKey]map[int64]bool
+	// retryAt is when a wake may flush again after a retryable failure.
+	// Only the alert loop touches it.
+	retryAt time.Time
 	// queueMu serialises read-modify-write of the task alert queue in state.
 	queueMu sync.Mutex
 }

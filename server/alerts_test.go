@@ -340,6 +340,57 @@ func TestAlertLoop_ReconcilesOnWakeAndStopsOnCancel(t *testing.T) {
 	}
 }
 
+func TestWaitForFlush_FailedFlushIgnoresWakesUntilTheNextTick(t *testing.T) {
+	ctx := context.Background()
+	b, host, tg := newAlertBot(t)
+	clk := b.clock.(*fakeClock)
+	tg.sendErr = errors.New("telegram sendMessage: request failed: connection reset")
+	host.setPending(permission("i1", "task-1", "x"))
+	b.flushAlerts(ctx)
+
+	tick := make(chan time.Time)
+	done := make(chan bool, 1)
+	go func() { done <- b.waitForFlush(ctx, tick) }()
+	b.nudge()
+	select {
+	case <-done:
+		t.Fatal("an event woke the loop during an outage before the reconcile tick")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	clk.advance(reconcileInterval)
+	b.nudge()
+	select {
+	case ok := <-done:
+		require.True(t, ok)
+	case <-time.After(2 * time.Second):
+		t.Fatal("a wake after the retry interval did not flush")
+	}
+}
+
+func TestWaitForFlush_TickFlushesDuringAnOutage(t *testing.T) {
+	ctx := context.Background()
+	b, host, tg := newAlertBot(t)
+	tg.sendErr = errors.New("telegram sendMessage: request failed: connection reset")
+	host.setPending(permission("i1", "task-1", "x"))
+	b.flushAlerts(ctx)
+
+	tick := make(chan time.Time, 1)
+	tick <- time.Time{}
+	require.True(t, b.waitForFlush(ctx, tick))
+}
+
+func TestWaitForFlush_WakeFlushesAfterASettledFlush(t *testing.T) {
+	ctx := context.Background()
+	b, host, _ := newAlertBot(t)
+	host.setPending(permission("i1", "task-1", "x"))
+	b.flushAlerts(ctx)
+
+	b.nudge()
+	require.True(t, b.waitForFlush(ctx, make(chan time.Time)))
+	require.Equal(t, []time.Duration{alertDebounce}, b.clock.(*fakeClock).sleeps(), "a wake still debounces")
+}
+
 func TestFlushAlerts_TransientSendFailureRetriesNextCycle(t *testing.T) {
 	ctx := context.Background()
 	b, host, tg := newAlertBot(t)
