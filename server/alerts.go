@@ -127,15 +127,17 @@ func (b *bot) flushAlerts(ctx context.Context) {
 		}
 	}
 	if nextSent != nil {
+		b.sentMemo = nextSent
 		if err := b.store.setSentInteractions(ctx, nextSent); err != nil && ctx.Err() == nil {
 			log.Printf("telegram: %v", err)
 		}
 	}
 }
 
-// newInteractionAlerts diffs ListPending against the sent set. nextSent is
-// the pending ids that are now alerted (resolved ids drop out), or nil when
-// nothing changed or the list could not be read.
+// newInteractionAlerts diffs ListPending against the sent set, stored and in
+// memory: the memory copy stops a repeat every cycle while state writes fail.
+// nextSent is the pending ids that are now alerted (resolved ids drop out), or
+// nil when the stored set already matches or the list could not be read.
 func (b *bot) newInteractionAlerts(ctx context.Context) ([]alert, map[string]bool, error) {
 	pending, err := b.pendingInteractions(ctx)
 	if err != nil {
@@ -154,7 +156,7 @@ func (b *bot) newInteractionAlerts(ctx context.Context) ([]alert, map[string]boo
 			continue
 		}
 		nextSent[in.ID] = true
-		if sent[in.ID] || !b.cfg.AlertInteractions {
+		if sent[in.ID] || b.sentMemo[in.ID] || !b.cfg.AlertInteractions {
 			continue
 		}
 		alerts = append(alerts, interactionAlert(in, b.taskTitle(ctx, in.TaskID, titles)))

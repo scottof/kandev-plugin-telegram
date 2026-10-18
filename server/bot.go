@@ -24,6 +24,9 @@ type bot struct {
 	wake           chan struct{}
 	reconcileEvery time.Duration
 	debounce       time.Duration
+	// sentMemo is the last sent interaction set written to state, kept in
+	// case the write failed. Only the alert loop touches it.
+	sentMemo map[string]bool
 	// queueMu serialises read-modify-write of the task alert queue in state.
 	queueMu sync.Mutex
 }

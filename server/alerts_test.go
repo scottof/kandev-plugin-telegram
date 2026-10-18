@@ -516,3 +516,21 @@ func TestOnEvent_QueueWriteFailureAsksForRedeliveryWithoutMarker(t *testing.T) {
 	b.flushAlerts(ctx)
 	require.Len(t, tg.sentMessages(), 1)
 }
+
+func TestFlushAlerts_SentSetWriteFailureDoesNotRepeatAlerts(t *testing.T) {
+	ctx := context.Background()
+	b, host, tg := newAlertBot(t)
+	host.setStateErr = map[string]error{stateKeySentInteractions: errors.New("state unavailable")}
+	host.setPending(permission("i1", "task-1", "x"))
+
+	b.flushAlerts(ctx)
+	b.flushAlerts(ctx)
+	require.Len(t, tg.sentMessages(), 1, "the in-memory sent set covers a failed write")
+
+	host.setStateErr = nil
+	b.flushAlerts(ctx)
+	require.Len(t, tg.sentMessages(), 1)
+	sent, err := b.store.sentInteractions(ctx)
+	require.NoError(t, err)
+	require.Equal(t, map[string]bool{"i1": true}, sent, "the write is retried once state works again")
+}
