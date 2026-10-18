@@ -65,6 +65,29 @@ func (p *telegramPlugin) currentBot() *bot {
 	return p.bot
 }
 
+// OnEvent handles the events declared in manifest.yaml. Events that arrive
+// before the bot is connected are dropped; returning an error asks kandev to
+// redeliver, which the task alert log makes safe.
+func (p *telegramPlugin) OnEvent(ctx context.Context, e *pluginsdk.Event) error {
+	b := p.currentBot()
+	if b == nil || e == nil {
+		return nil
+	}
+	switch e.EventType {
+	case eventTaskStateChanged:
+		a, ok, err := b.taskAlertFromEvent(ctx, e.Payload)
+		if err != nil {
+			return err
+		}
+		if ok {
+			b.enqueue(a)
+		}
+	case eventPendingActionChanged:
+		b.nudge()
+	}
+	return nil
+}
+
 func (p *telegramPlugin) run(ctx context.Context, host pluginsdk.Host) {
 	defer close(p.done)
 	store := stateStore{host: host}

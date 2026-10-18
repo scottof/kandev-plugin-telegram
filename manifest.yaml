@@ -10,7 +10,7 @@ categories: ["connector"]
 
 # Oldest release with every host API this plugin calls. Raise it when a newer
 # API is used. The check is skipped on hosts built from a git checkout.
-min_kandev_version: "0.86.0"
+min_kandev_version: "0.92.0"
 
 runtime:
   type: binary
@@ -22,7 +22,11 @@ runtime:
     windows-amd64: "server/plugin-windows-amd64.exe"
 
 capabilities:
+  # task.state_changed drives finished/failed/review alerts;
+  # session.pending_action_changed only triggers an early ListPending check.
+  events: ["task.state_changed", "session.pending_action_changed"]
   state: true
+  api_read: ["tasks", "interactions"]
 
 ui:
   bundle: "/ui/bundle.js"

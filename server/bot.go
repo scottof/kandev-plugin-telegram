@@ -20,24 +20,43 @@ type bot struct {
 
 	statusMu sync.Mutex
 	status   botStatus
+
+	wake           chan struct{}
+	reconcileEvery time.Duration
+	debounce       time.Duration
+	queueMu        sync.Mutex
+	queued         []alert
 }
 
 func newBot(host pluginsdk.Host, tg telegramClient, cfg config, clk clock, botUsername string) *bot {
 	return &bot{
-		host:        host,
-		tg:          tg,
-		cfg:         cfg,
-		clock:       clk,
-		store:       stateStore{host: host},
-		botUsername: botUsername,
-		status:      botStatus{Connected: true, Username: botUsername},
+		host:           host,
+		tg:             tg,
+		cfg:            cfg,
+		clock:          clk,
+		store:          stateStore{host: host},
+		botUsername:    botUsername,
+		status:         botStatus{Connected: true, Username: botUsername},
+		wake:           make(chan struct{}, 1),
+		reconcileEvery: reconcileInterval,
+		debounce:       alertDebounce,
 	}
 }
 
-// run blocks until ctx ends.
+// run blocks until ctx ends and both loops have stopped.
 func (b *bot) run(ctx context.Context) {
 	b.writeStatus(ctx)
-	b.pollLoop(ctx)
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		b.pollLoop(ctx)
+	}()
+	go func() {
+		defer wg.Done()
+		b.alertLoop(ctx)
+	}()
+	wg.Wait()
 }
 
 // updateStatus applies change and persists the status only when it differs,

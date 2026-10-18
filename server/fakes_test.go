@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"strconv"
 	"sync"
 	"time"
 
@@ -16,10 +18,11 @@ type fakeHost struct {
 	mu     sync.Mutex
 	state  map[string]map[string]any
 	config map[string]any
+	d      *fakeData
 }
 
 func newFakeHost() *fakeHost {
-	return &fakeHost{state: make(map[string]map[string]any), config: map[string]any{}}
+	return &fakeHost{state: make(map[string]map[string]any), config: map[string]any{}, d: &fakeData{}}
 }
 
 func fakeStateKey(scope, scopeID, key string) string {
@@ -66,6 +69,87 @@ func (h *fakeHost) DeleteSecret(context.Context, string) error              { re
 func (h *fakeHost) EmitEvent(context.Context, string, map[string]any) error { return nil }
 
 var _ pluginsdk.Host = (*fakeHost)(nil)
+
+// fakeData holds the Host data API fixtures behind their own mutex.
+type fakeData struct {
+	mu             sync.Mutex
+	tasks          []pluginsdk.Task
+	pending        []pluginsdk.Interaction
+	listPendingErr error
+	listCalls      int
+}
+
+func (h *fakeHost) data() *fakeData { return h.d }
+
+func (h *fakeHost) addTask(task pluginsdk.Task) {
+	d := h.data()
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.tasks = append(d.tasks, task)
+}
+
+func (h *fakeHost) setPending(items ...pluginsdk.Interaction) {
+	d := h.data()
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.pending = items
+}
+
+func (h *fakeHost) Tasks() pluginsdk.TaskReader { return &fakeTasks{d: h.data()} }
+
+func (h *fakeHost) Interactions() pluginsdk.InteractionAccessor {
+	return &fakeInteractions{d: h.data()}
+}
+
+type fakeTasks struct {
+	pluginsdk.TaskReader
+	d *fakeData
+}
+
+func (f *fakeTasks) Get(_ context.Context, id string) (*pluginsdk.Task, error) {
+	f.d.mu.Lock()
+	defer f.d.mu.Unlock()
+	for _, t := range f.d.tasks {
+		if t.ID == id {
+			t := t
+			return &t, nil
+		}
+	}
+	return nil, errors.New("task not found")
+}
+
+type fakeInteractions struct {
+	pluginsdk.InteractionAccessor
+	d *fakeData
+}
+
+// ListPending pages with the cursor holding the next index.
+func (f *fakeInteractions) ListPending(_ context.Context, _ pluginsdk.InteractionFilter, page pluginsdk.Page) ([]pluginsdk.Interaction, *pluginsdk.PageInfo, error) {
+	f.d.mu.Lock()
+	defer f.d.mu.Unlock()
+	f.d.listCalls++
+	if f.d.listPendingErr != nil {
+		return nil, nil, f.d.listPendingErr
+	}
+	start := 0
+	if page.Cursor != "" {
+		start, _ = strconv.Atoi(page.Cursor)
+	}
+	limit := int(page.Limit)
+	if limit <= 0 {
+		limit = len(f.d.pending)
+	}
+	end := start + limit
+	if end > len(f.d.pending) {
+		end = len(f.d.pending)
+	}
+	info := &pluginsdk.PageInfo{}
+	if end < len(f.d.pending) {
+		info.HasMore = true
+		info.NextCursor = strconv.Itoa(end)
+	}
+	return append([]pluginsdk.Interaction(nil), f.d.pending[start:end]...), info, nil
+}
 
 // fakeClock records sleeps instead of waiting, and advances Now by each sleep.
 type fakeClock struct {
