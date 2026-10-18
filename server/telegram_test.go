@@ -204,6 +204,23 @@ func TestHTTPTelegram_RetryAfterIsNotWaitedOnceItHasPassed(t *testing.T) {
 	require.Equal(t, []time.Duration{5 * time.Second}, clk.sleeps())
 }
 
+func TestHTTPTelegram_RetryAfterIsCappedAtFiveMinutes(t *testing.T) {
+	stub, srv := newStubTelegram(t)
+	clk := newFakeClock()
+	calls := 0
+	stub.handlers["sendMessage"] = func(map[string]any) (int, string) {
+		calls++
+		if calls == 1 {
+			return 429, `{"ok":false,"error_code":429,"description":"Too Many Requests","parameters":{"retry_after":86400}}`
+		}
+		return 200, `{"ok":true,"result":{"message_id":1,"date":1,"chat":{"id":42,"type":"private"}}}`
+	}
+	client := newTestClient(srv, clk)
+	require.NoError(t, client.SendMessage(context.Background(), 42, outMessage{Text: "hi"}, 0))
+	require.NoError(t, client.SendMessage(context.Background(), 42, outMessage{Text: "hi"}, 0))
+	require.Equal(t, []time.Duration{5 * time.Minute}, clk.sleeps())
+}
+
 func TestHTTPTelegram_HoldExtendedDuringSleepDelaysTheSend(t *testing.T) {
 	stub, srv := newStubTelegram(t)
 	clk := newFakeClock()

@@ -19,6 +19,7 @@ const (
 	maxResponseBytes    = 8 << 20
 	sendRequestTimeout  = 20 * time.Second
 	pollRequestHeadroom = 15 * time.Second
+	maxRetryAfter       = 5 * time.Minute
 )
 
 // clock is injected so retry and backoff waits are testable.
@@ -197,6 +198,9 @@ func (c *httpTelegram) call(ctx context.Context, method string, req, result any,
 }
 
 func (c *httpTelegram) hold(d time.Duration) {
+	// Clamped rather than rejected: a longer retry_after would freeze the
+	// bot, and the next 429 sets a fresh hold anyway.
+	d = min(d, maxRetryAfter)
 	until := c.clock.Now().Add(d)
 	c.holdMu.Lock()
 	defer c.holdMu.Unlock()
