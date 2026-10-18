@@ -17,7 +17,10 @@ const (
 	alertDebounce     = 2 * time.Second
 	pendingPageSize   = 100
 	maxPendingPages   = 20
-	untitledTask      = "Untitled task"
+	// maxQueuedAlerts bounds task alerts waiting for delivery, so a long
+	// Telegram outage cannot grow the queue without limit.
+	maxQueuedAlerts = 50
+	untitledTask    = "Untitled task"
 )
 
 // alertLoop sends alerts until ctx ends. Pending interactions come from the
@@ -52,9 +55,17 @@ func (b *bot) nudge() {
 
 func (b *bot) enqueue(a alert) {
 	b.queueMu.Lock()
-	b.queued = append(b.queued, a)
+	b.queued = capQueue(append(b.queued, a))
 	b.queueMu.Unlock()
 	b.nudge()
+}
+
+// capQueue keeps the newest maxQueuedAlerts alerts.
+func capQueue(alerts []alert) []alert {
+	if len(alerts) > maxQueuedAlerts {
+		return alerts[len(alerts)-maxQueuedAlerts:]
+	}
+	return alerts
 }
 
 // requeue puts undelivered task alerts back in front of the queue without
@@ -64,7 +75,7 @@ func (b *bot) requeue(alerts []alert) {
 		return
 	}
 	b.queueMu.Lock()
-	b.queued = append(append([]alert(nil), alerts...), b.queued...)
+	b.queued = capQueue(append(append([]alert(nil), alerts...), b.queued...))
 	b.queueMu.Unlock()
 }
 

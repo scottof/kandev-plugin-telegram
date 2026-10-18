@@ -406,3 +406,29 @@ func TestFlushAlerts_SuccessClearsAlertError(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, status.AlertError)
 }
+
+func TestEnqueue_CapsQueueDroppingOldest(t *testing.T) {
+	b, _, _ := newAlertBot(t)
+	for i := 0; i < maxQueuedAlerts+5; i++ {
+		b.enqueue(alert{Kind: alertCompleted, TaskID: fmt.Sprintf("task-%d", i), TaskTitle: "t"})
+	}
+	queued := b.drainQueued()
+	require.Len(t, queued, maxQueuedAlerts)
+	require.Equal(t, "task-5", queued[0].TaskID, "the oldest alerts are dropped")
+	require.Equal(t, fmt.Sprintf("task-%d", maxQueuedAlerts+4), queued[len(queued)-1].TaskID)
+}
+
+func TestFlushAlerts_RequeueDuringOutageKeepsTheCap(t *testing.T) {
+	ctx := context.Background()
+	b, _, tg := newAlertBot(t)
+	tg.sendErr = errors.New("telegram sendMessage: request failed: connection reset")
+	for round := 0; round < 3; round++ {
+		for i := 0; i < maxQueuedAlerts; i++ {
+			b.enqueue(alert{Kind: alertCompleted, TaskID: fmt.Sprintf("task-%d-%d", round, i), TaskTitle: "t"})
+		}
+		b.flushAlerts(ctx)
+	}
+	queued := b.drainQueued()
+	require.Len(t, queued, maxQueuedAlerts)
+	require.Equal(t, "task-2-0", queued[0].TaskID, "the newest alerts survive an outage")
+}
