@@ -97,6 +97,8 @@ func (b *bot) handleUpdate(ctx context.Context, u tgUpdate) {
 		return
 	}
 	switch cmd.Name {
+	case "status":
+		b.reply(ctx, msg, b.statusMessage(ctx))
 	default:
 		b.reply(ctx, msg, outMessage{Text: helpText})
 	}

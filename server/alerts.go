@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"log"
 	"time"
 
@@ -89,11 +88,7 @@ func (b *bot) flushAlerts(ctx context.Context) {
 // the pending ids that are now alerted (resolved ids drop out), or nil when
 // nothing changed or the list could not be read.
 func (b *bot) newInteractionAlerts(ctx context.Context) ([]alert, map[string]bool, error) {
-	accessor, ok := pluginsdk.Interactions(b.host)
-	if !ok {
-		return nil, nil, errors.New("host has no interactions API")
-	}
-	pending, err := listAllPending(ctx, accessor)
+	pending, err := b.pendingInteractions(ctx)
 	if err != nil {
 		return nil, nil, err
 	}

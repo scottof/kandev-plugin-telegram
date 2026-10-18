@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
+	"sort"
 	"strconv"
 	"sync"
 	"time"
@@ -77,6 +79,8 @@ type fakeData struct {
 	pending        []pluginsdk.Interaction
 	listPendingErr error
 	listCalls      int
+	listTasksErr   error
+	lastTaskFilter pluginsdk.TaskFilter
 }
 
 func (h *fakeHost) data() *fakeData { return h.d }
@@ -116,6 +120,27 @@ func (f *fakeTasks) Get(_ context.Context, id string) (*pluginsdk.Task, error) {
 		}
 	}
 	return nil, errors.New("task not found")
+}
+
+// List filters by state only and returns tasks newest first, like the host.
+func (f *fakeTasks) List(_ context.Context, filter pluginsdk.TaskFilter, page pluginsdk.Page) ([]pluginsdk.Task, *pluginsdk.PageInfo, error) {
+	f.d.mu.Lock()
+	defer f.d.mu.Unlock()
+	f.d.lastTaskFilter = filter
+	if f.d.listTasksErr != nil {
+		return nil, nil, f.d.listTasksErr
+	}
+	var out []pluginsdk.Task
+	for _, t := range f.d.tasks {
+		if len(filter.States) == 0 || slices.Contains(filter.States, t.State) {
+			out = append(out, t)
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].UpdatedAt > out[j].UpdatedAt })
+	if page.Limit > 0 && len(out) > int(page.Limit) {
+		out = out[:page.Limit]
+	}
+	return out, &pluginsdk.PageInfo{}, nil
 }
 
 type fakeInteractions struct {

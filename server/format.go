@@ -27,6 +27,7 @@ const (
 	alertCompleted     alertKind = "completed"
 	alertFailed        alertKind = "failed"
 	alertReview        alertKind = "review"
+	alertRunning       alertKind = "running" // only used by /status
 )
 
 var alertLabels = map[alertKind]string{
@@ -35,6 +36,7 @@ var alertLabels = map[alertKind]string{
 	alertCompleted:     "Finished",
 	alertFailed:        "Failed",
 	alertReview:        "Waiting for review",
+	alertRunning:       "Running",
 }
 
 // alert is one thing worth telling the allowed users about.
