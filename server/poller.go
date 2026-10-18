@@ -35,9 +35,9 @@ func (b *backoff) reset() { b.current = 0 }
 // instead of exiting; a 409 means another getUpdates call is still open, for
 // example an old process overlapping a restart.
 func (b *bot) pollLoop(ctx context.Context) {
-	offset, err := b.store.offset(ctx)
-	if err != nil && ctx.Err() == nil {
-		log.Printf("telegram: %v; polling from the oldest unconfirmed update", err)
+	offset, ok := b.loadOffset(ctx)
+	if !ok {
+		return
 	}
 	var wait backoff
 	for ctx.Err() == nil {
@@ -66,6 +66,30 @@ func (b *bot) pollLoop(ctx context.Context) {
 			st.Connected = true
 		})
 		offset = next
+	}
+}
+
+// loadOffset reads the stored offset, retrying with backoff. Polling from 0
+// instead would replay every unconfirmed update, and a replayed /new files a
+// duplicate task. ok is false only when ctx ends.
+func (b *bot) loadOffset(ctx context.Context) (int64, bool) {
+	var wait backoff
+	for retried := false; ; retried = true {
+		offset, err := b.store.offset(ctx)
+		if err == nil {
+			if retried {
+				b.updateStatus(ctx, func(st *botStatus) { st.LastError = "" })
+			}
+			return offset, true
+		}
+		if ctx.Err() != nil {
+			return 0, false
+		}
+		log.Printf("telegram: %v", err)
+		b.updateStatus(ctx, func(st *botStatus) { st.LastError = err.Error() })
+		if b.clock.Sleep(ctx, wait.next()) != nil {
+			return 0, false
+		}
 	}
 }
 

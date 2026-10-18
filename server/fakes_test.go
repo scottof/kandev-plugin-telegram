@@ -23,6 +23,8 @@ type fakeHost struct {
 	d      *fakeData
 	// setStateErr makes SetState fail for the given key.
 	setStateErr map[string]error
+	// getStateFailures makes GetState fail that many times for the given key.
+	getStateFailures map[string]int
 }
 
 func newFakeHost() *fakeHost {
@@ -36,6 +38,10 @@ func fakeStateKey(scope, scopeID, key string) string {
 func (h *fakeHost) GetState(_ context.Context, scope, scopeID, key string) (map[string]any, bool, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if h.getStateFailures[key] > 0 {
+		h.getStateFailures[key]--
+		return nil, false, errors.New("state unavailable")
+	}
 	v, ok := h.state[fakeStateKey(scope, scopeID, key)]
 	return v, ok, nil
 }

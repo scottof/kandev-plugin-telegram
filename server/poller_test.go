@@ -213,3 +213,34 @@ func TestPollLoop_UnauthorizedClearsConnected(t *testing.T) {
 	require.False(t, status.Connected)
 	require.Contains(t, status.LastError, "401")
 }
+
+func TestPollLoop_RetriesOffsetReadInsteadOfStartingFromZero(t *testing.T) {
+	host := newFakeHost()
+	require.NoError(t, stateStore{host: host}.setOffset(context.Background(), 77))
+	host.getStateFailures = map[string]int{stateKeyOffset: 2}
+	tg := newFakeTelegram()
+	b := newTestBot(t, host, tg)
+	clk := b.clock.(*fakeClock)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	tg.onDrained = cancel
+	b.pollLoop(ctx)
+
+	require.Equal(t, []int64{77}, tg.offsets(), "a replayed update could file a /new task twice")
+	require.Equal(t, []time.Duration{backoffMin, 2 * backoffMin}, clk.sleeps())
+	status, err := b.store.botStatus(context.Background())
+	require.NoError(t, err)
+	require.Empty(t, status.LastError, "a successful read clears the error")
+}
+
+func TestPollLoop_StopsWhileRetryingOffsetRead(t *testing.T) {
+	host := newFakeHost()
+	host.getStateFailures = map[string]int{stateKeyOffset: 1000}
+	tg := newFakeTelegram()
+	b := newTestBot(t, host, tg)
+	ctx, cancel := context.WithCancel(context.Background())
+	b.clock.(*fakeClock).onSleep = cancel
+
+	b.pollLoop(ctx)
+	require.Empty(t, tg.offsets(), "it never polls without a known offset")
+}
