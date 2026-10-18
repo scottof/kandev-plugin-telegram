@@ -126,3 +126,9 @@ tests/               UI tests
 docs/PITCH.md        v1 scope
 docs/SMOKE.md        manual smoke test
 ```
+
+## About
+
+Built with Claude Code agents running in Kandev.
+
+Licensed under the MIT License, see [`LICENSE`](LICENSE).

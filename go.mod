@@ -28,7 +28,7 @@ require (
 )
 
 // The kandev SDK (pkg/pluginsdk) is not published as a standalone module
-// yet — this repo is developed against a local checkout of the kandev
+// yet; this repo is developed against a local checkout of the kandev
 // monorepo. See README.md "Build and install" for the sibling-repo
 // layout this path assumes, and what changes once pkg/pluginsdk ships as its
 // own versioned module.
