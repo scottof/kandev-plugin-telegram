@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"sync"
+	"time"
 
 	"github.com/kandev/kandev/pkg/pluginsdk"
 )
@@ -65,6 +66,42 @@ func (h *fakeHost) DeleteSecret(context.Context, string) error              { re
 func (h *fakeHost) EmitEvent(context.Context, string, map[string]any) error { return nil }
 
 var _ pluginsdk.Host = (*fakeHost)(nil)
+
+// fakeClock records sleeps instead of waiting, and advances Now by each sleep.
+type fakeClock struct {
+	mu      sync.Mutex
+	now     time.Time
+	slept   []time.Duration
+	onSleep func()
+}
+
+func newFakeClock() *fakeClock {
+	return &fakeClock{now: time.Date(2026, 10, 18, 10, 0, 0, 0, time.UTC)}
+}
+
+func (c *fakeClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.now
+}
+
+func (c *fakeClock) Sleep(ctx context.Context, d time.Duration) error {
+	c.mu.Lock()
+	c.slept = append(c.slept, d)
+	c.now = c.now.Add(d)
+	hook := c.onSleep
+	c.mu.Unlock()
+	if hook != nil {
+		hook()
+	}
+	return ctx.Err()
+}
+
+func (c *fakeClock) sleeps() []time.Duration {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]time.Duration(nil), c.slept...)
+}
 
 func jsonRoundTrip(v map[string]any) map[string]any {
 	data, err := json.Marshal(v)
