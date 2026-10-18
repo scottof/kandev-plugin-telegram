@@ -58,6 +58,15 @@ func TestLoadConfig_RejectsInvalidUserID(t *testing.T) {
 	}
 }
 
+func TestLoadConfig_UserIDErrorsNameThePositionNotTheValue(t *testing.T) {
+	_, err := loadConfig(map[string]any{"allowed_user_ids": "42, 123456789:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw"})
+	require.Error(t, err)
+	require.Equal(t, "allowed_user_ids: entry 2 is not a numeric Telegram user id", err.Error())
+	for _, part := range []string{"123456789", "AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw", "AAHdq"} {
+		require.NotContains(t, err.Error(), part)
+	}
+}
+
 func TestLoadConfig_RejectsInvalidKandevURL(t *testing.T) {
 	for _, raw := range []string{"kandev.local", "ftp://kandev.local", "http://", "://x"} {
 		_, err := loadConfig(map[string]any{"kandev_url": raw})

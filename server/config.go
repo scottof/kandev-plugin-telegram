@@ -74,14 +74,18 @@ func (c config) isAllowed(userID int64) bool {
 func parseUserIDs(raw string) ([]int64, error) {
 	var ids []int64
 	seen := map[int64]bool{}
+	entry := 0
 	for _, part := range strings.Split(raw, ",") {
 		part = strings.TrimSpace(part)
 		if part == "" {
 			continue
 		}
+		entry++
 		id, err := strconv.ParseInt(part, 10, 64)
 		if err != nil || id <= 0 {
-			return nil, fmt.Errorf("allowed_user_ids: %q is not a Telegram user id", part)
+			// Never echo the entry: a bot token pasted here by mistake would
+			// reach the settings card and bot_status.
+			return nil, fmt.Errorf("allowed_user_ids: entry %d is not a numeric Telegram user id", entry)
 		}
 		if !seen[id] {
 			seen[id] = true
