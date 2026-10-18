@@ -204,6 +204,29 @@ func TestHTTPTelegram_RetryAfterIsNotWaitedOnceItHasPassed(t *testing.T) {
 	require.Equal(t, []time.Duration{5 * time.Second}, clk.sleeps())
 }
 
+func TestHTTPTelegram_HoldExtendedDuringSleepDelaysTheSend(t *testing.T) {
+	stub, srv := newStubTelegram(t)
+	clk := newFakeClock()
+	start := clk.Now()
+	var sentAt time.Time
+	stub.handlers["sendMessage"] = func(map[string]any) (int, string) {
+		sentAt = clk.Now()
+		return 200, `{"ok":true,"result":{"message_id":1,"date":1,"chat":{"id":42,"type":"private"}}}`
+	}
+	client := newTestClient(srv, clk)
+	client.hold(30 * time.Second)
+	extended := false
+	clk.onSleep = func() {
+		// Another call gets a longer 429 while this one waits.
+		if !extended {
+			extended = true
+			client.hold(30 * time.Second)
+		}
+	}
+	require.NoError(t, client.SendMessage(context.Background(), 42, outMessage{Text: "hi"}, 0))
+	require.Equal(t, start.Add(60*time.Second), sentAt, "the send waits for the extended hold")
+}
+
 func TestHTTPTelegram_APIErrorNeverLeaksToken(t *testing.T) {
 	stub, srv := newStubTelegram(t)
 	stub.handlers["getUpdates"] = func(map[string]any) (int, string) {

@@ -205,14 +205,21 @@ func (c *httpTelegram) hold(d time.Duration) {
 	}
 }
 
+// waitForHold re-reads the hold after every sleep: another call may have
+// received a longer retry_after in the meantime.
 func (c *httpTelegram) waitForHold(ctx context.Context) error {
-	c.holdMu.Lock()
-	until := c.holdUntil
-	c.holdMu.Unlock()
-	if wait := until.Sub(c.clock.Now()); wait > 0 {
-		return c.clock.Sleep(ctx, wait)
+	for {
+		c.holdMu.Lock()
+		until := c.holdUntil
+		c.holdMu.Unlock()
+		wait := until.Sub(c.clock.Now())
+		if wait <= 0 {
+			return nil
+		}
+		if err := c.clock.Sleep(ctx, wait); err != nil {
+			return err
+		}
 	}
-	return nil
 }
 
 type tgResponse struct {
