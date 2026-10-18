@@ -21,6 +21,8 @@ type fakeHost struct {
 	state  map[string]map[string]any
 	config map[string]any
 	d      *fakeData
+	// setStateErr makes SetState fail for the given key.
+	setStateErr map[string]error
 }
 
 func newFakeHost() *fakeHost {
@@ -45,6 +47,9 @@ func (h *fakeHost) SetState(_ context.Context, scope, scopeID, key string, value
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if err := h.setStateErr[key]; err != nil {
+		return err
+	}
 	h.state[fakeStateKey(scope, scopeID, key)] = stored
 	return nil
 }

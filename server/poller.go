@@ -31,13 +31,13 @@ func (b *backoff) next() time.Duration {
 
 func (b *backoff) reset() { b.current = 0 }
 
-// pollLoop long-polls getUpdates until ctx ends. A 409 means another
-// getUpdates call is still open (an old process overlapping a restart), so the
-// loop waits and retries instead of exiting.
+// pollLoop long-polls getUpdates until ctx ends. Errors back off and retry
+// instead of exiting; a 409 means another getUpdates call is still open, for
+// example an old process overlapping a restart.
 func (b *bot) pollLoop(ctx context.Context) {
 	offset, err := b.store.offset(ctx)
 	if err != nil && ctx.Err() == nil {
-		log.Printf("telegram: %v; starting from the latest update", err)
+		log.Printf("telegram: %v; polling from the oldest unconfirmed update", err)
 	}
 	var wait backoff
 	for ctx.Err() == nil {
@@ -46,7 +46,12 @@ func (b *bot) pollLoop(ctx context.Context) {
 			if ctx.Err() != nil {
 				return
 			}
-			b.updateStatus(ctx, func(st *botStatus) { st.LastError = err.Error() })
+			b.updateStatus(ctx, func(st *botStatus) {
+				st.LastError = err.Error()
+				if isUnauthorized(err) {
+					st.Connected = false
+				}
+			})
 			if b.clock.Sleep(ctx, wait.next()) != nil {
 				return
 			}
@@ -56,7 +61,10 @@ func (b *bot) pollLoop(ctx context.Context) {
 		if next != offset {
 			b.updateStatus(ctx, func(st *botStatus) { st.LastUpdateAt = b.now() })
 		}
-		b.updateStatus(ctx, func(st *botStatus) { st.LastError = "" })
+		b.updateStatus(ctx, func(st *botStatus) {
+			st.LastError = ""
+			st.Connected = true
+		})
 		offset = next
 	}
 }
@@ -70,12 +78,14 @@ func (b *bot) pollOnce(ctx context.Context, offset int64) (int64, error) {
 		return offset, err
 	}
 	for _, u := range updates {
-		if u.UpdateID+1 > offset {
-			offset = u.UpdateID + 1
+		next := u.UpdateID + 1
+		if next <= offset {
+			continue
 		}
-		if err := b.store.setOffset(ctx, offset); err != nil {
-			log.Printf("telegram: %v", err)
+		if err := b.store.setOffset(ctx, next); err != nil {
+			return offset, err
 		}
+		offset = next
 		b.handleUpdate(ctx, u)
 	}
 	return offset, nil

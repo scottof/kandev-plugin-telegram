@@ -289,3 +289,33 @@ func TestAlertLoop_ReconcilesOnWakeAndStopsOnCancel(t *testing.T) {
 		t.Fatal("alert loop did not stop")
 	}
 }
+
+func TestFlushAlerts_TransientSendFailureRetriesNextCycle(t *testing.T) {
+	ctx := context.Background()
+	b, host, tg := newAlertBot(t)
+	tg.sendErr = errors.New("telegram sendMessage: request failed: connection reset")
+	host.setPending(permission("i1", "task-1", "x"))
+	b.enqueue(alert{Kind: alertCompleted, TaskID: "task-2", TaskTitle: "Add cache"})
+
+	b.flushAlerts(ctx)
+	sent, err := b.store.sentInteractions(ctx)
+	require.NoError(t, err)
+	require.Empty(t, sent, "nothing is marked sent when no user was reached")
+
+	tg.sendErr = nil
+	b.flushAlerts(ctx)
+	msgs := tg.sentMessages()
+	require.Len(t, msgs, 1)
+	require.Contains(t, msgs[0].Msg.Text, "2 updates from kandev:", "the interaction and the requeued task alert both go out")
+}
+
+func TestFlushAlerts_AllUsersForbiddenStillMarksSent(t *testing.T) {
+	ctx := context.Background()
+	b, host, tg := newAlertBot(t)
+	tg.sendErr = &telegramAPIError{Method: "sendMessage", Code: 403, Description: "Forbidden"}
+	host.setPending(permission("i1", "task-1", "x"))
+	b.flushAlerts(ctx)
+	sent, err := b.store.sentInteractions(ctx)
+	require.NoError(t, err)
+	require.Equal(t, map[string]bool{"i1": true}, sent, "a 403 will not heal by retrying")
+}

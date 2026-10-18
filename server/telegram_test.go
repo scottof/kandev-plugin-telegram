@@ -170,7 +170,6 @@ func TestHTTPTelegram_APIErrorNeverLeaksToken(t *testing.T) {
 	var apiErr *telegramAPIError
 	require.ErrorAs(t, err, &apiErr)
 	require.Equal(t, 409, apiErr.Code)
-	require.True(t, isConflict(err))
 	require.NotContains(t, err.Error(), testToken)
 	require.NotContains(t, err.Error(), srv.URL)
 }

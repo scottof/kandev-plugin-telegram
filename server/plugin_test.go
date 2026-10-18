@@ -241,3 +241,19 @@ func TestWebhook_WrongMethodAndUnknownKey(t *testing.T) {
 	status, _ = webhook(t, p, "ping", "POST")
 	require.Equal(t, int32(404), status)
 }
+
+func TestOnEvent_WhileStartingAsksForRedelivery(t *testing.T) {
+	p := newTelegramPlugin(context.Background())
+	p.UnimplementedPlugin.SetHost(newFakeHost())
+	err := p.OnEvent(context.Background(), &pluginsdk.Event{EventType: "task.state_changed"})
+	require.ErrorIs(t, err, errBotStarting)
+}
+
+func TestOnEvent_IdleBotDropsEvents(t *testing.T) {
+	host := newFakeHost()
+	p, _ := newTestPlugin(context.Background(), newFakeTelegram())
+	p.SetHost(host)
+	p.wait(2 * time.Second)
+	err := p.OnEvent(context.Background(), &pluginsdk.Event{EventType: "task.state_changed"})
+	require.NoError(t, err, "a bot left idle by missing settings never retries")
+}

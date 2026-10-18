@@ -184,3 +184,32 @@ func TestBackoff(t *testing.T) {
 	b.reset()
 	require.Equal(t, 5*time.Second, b.next())
 }
+
+func TestPollOnce_OffsetWriteFailureStopsBeforeHandling(t *testing.T) {
+	host := newFakeHost()
+	host.setStateErr = map[string]error{stateKeyOffset: errors.New("state unavailable")}
+	tg := newFakeTelegram()
+	b := newTestBot(t, host, tg)
+	tg.queueUpdates(privateText(5, 42, "/start"), privateText(6, 42, "/start"))
+
+	next, err := b.pollOnce(context.Background(), 5)
+	require.Error(t, err)
+	require.Equal(t, int64(5), next, "the batch is fetched again from the old offset")
+	require.Empty(t, tg.sentMessages(), "an update whose offset was not stored is not handled")
+}
+
+func TestPollLoop_UnauthorizedClearsConnected(t *testing.T) {
+	tg := newFakeTelegram()
+	tg.queueError(&telegramAPIError{Method: "getUpdates", Code: 401, Description: "Unauthorized"})
+	host := newFakeHost()
+	b := newTestBot(t, host, tg)
+	clk := b.clock.(*fakeClock)
+	ctx, cancel := context.WithCancel(context.Background())
+	clk.onSleep = cancel
+	b.pollLoop(ctx)
+
+	status, err := b.store.botStatus(context.Background())
+	require.NoError(t, err)
+	require.False(t, status.Connected)
+	require.Contains(t, status.LastError, "401")
+}

@@ -56,6 +56,17 @@ func (b *bot) enqueue(a alert) {
 	b.nudge()
 }
 
+// requeue puts undelivered task alerts back in front of the queue without
+// waking the loop, so a Telegram outage retries on the regular interval.
+func (b *bot) requeue(alerts []alert) {
+	if len(alerts) == 0 {
+		return
+	}
+	b.queueMu.Lock()
+	b.queued = append(append([]alert(nil), alerts...), b.queued...)
+	b.queueMu.Unlock()
+}
+
 func (b *bot) drainQueued() []alert {
 	b.queueMu.Lock()
 	defer b.queueMu.Unlock()
@@ -73,9 +84,12 @@ func (b *bot) flushAlerts(ctx context.Context) {
 	if err != nil && ctx.Err() == nil {
 		log.Printf("telegram: reconciling pending interactions: %v", err)
 	}
-	alerts = append(alerts, b.drainQueued()...)
-	if len(alerts) > 0 {
-		b.broadcast(ctx, formatAlerts(alerts, b.cfg.KandevURL))
+	queued := b.drainQueued()
+	alerts = append(alerts, queued...)
+	if len(alerts) > 0 && !b.broadcast(ctx, formatAlerts(alerts, b.cfg.KandevURL)) {
+		// Nobody was reached: keep everything for the next cycle.
+		b.requeue(queued)
+		return
 	}
 	if nextSent != nil {
 		if err := b.store.setSentInteractions(ctx, nextSent); err != nil && ctx.Err() == nil {
@@ -146,19 +160,28 @@ func (b *bot) taskTitle(ctx context.Context, taskID string, cache map[string]str
 	return title
 }
 
-// broadcast sends msg to every allowed user. A user who never sent /start
-// gets a 403 from Telegram; that is logged and the others still get it.
-func (b *bot) broadcast(ctx context.Context, msg outMessage) {
+// broadcast sends msg to every allowed user and reports whether the alert is
+// settled: false only when every send failed with an error worth retrying. A
+// user who never sent /start gets a 403, which retrying will not fix.
+func (b *bot) broadcast(ctx context.Context, msg outMessage) bool {
+	if len(b.cfg.AllowedUserIDs) == 0 {
+		return true
+	}
+	settled := false
 	for _, userID := range b.cfg.AllowedUserIDs {
 		err := b.tg.SendMessage(ctx, userID, msg, 0)
 		switch {
-		case err == nil || ctx.Err() != nil:
+		case err == nil:
+			settled = true
+		case ctx.Err() != nil:
 		case isForbidden(err):
+			settled = true
 			log.Printf("telegram: user %d has not started the bot or blocked it", userID)
 		default:
 			log.Printf("telegram: sending alert: %v", err)
 		}
 	}
+	return settled
 }
 
 // taskAlertFromEvent maps a task.state_changed payload to an alert. Every

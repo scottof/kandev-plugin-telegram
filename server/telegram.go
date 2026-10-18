@@ -89,9 +89,9 @@ func (e *telegramAPIError) Error() string {
 	return fmt.Sprintf("telegram %s: %d %s", e.Method, e.Code, e.Description)
 }
 
-func isConflict(err error) bool {
+func isUnauthorized(err error) bool {
 	var apiErr *telegramAPIError
-	return errors.As(err, &apiErr) && apiErr.Code == http.StatusConflict
+	return errors.As(err, &apiErr) && apiErr.Code == http.StatusUnauthorized
 }
 
 func isForbidden(err error) bool {

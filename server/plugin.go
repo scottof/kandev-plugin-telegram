@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/kandev/kandev/pkg/pluginsdk"
@@ -23,12 +25,19 @@ type telegramPlugin struct {
 
 	startOnce sync.Once
 	done      chan struct{}
+	// idle is set when the bot will not start in this process, for example
+	// because settings are missing.
+	idle atomic.Bool
 
 	mu  sync.Mutex
 	bot *bot
 }
 
 var _ pluginsdk.Plugin = (*telegramPlugin)(nil)
+
+// errBotStarting asks kandev to redeliver an event that arrived before the
+// bot connected, instead of losing a task alert.
+var errBotStarting = errors.New("telegram bot is still starting")
 
 func newTelegramPlugin(ctx context.Context) *telegramPlugin {
 	return &telegramPlugin{
@@ -65,13 +74,18 @@ func (p *telegramPlugin) currentBot() *bot {
 	return p.bot
 }
 
-// OnEvent handles the events declared in manifest.yaml. Events that arrive
-// before the bot is connected are dropped; returning an error asks kandev to
-// redeliver, which the task alert log makes safe.
+// OnEvent handles the events declared in manifest.yaml. Returning an error
+// asks kandev to redeliver, which the task alert log makes safe.
 func (p *telegramPlugin) OnEvent(ctx context.Context, e *pluginsdk.Event) error {
-	b := p.currentBot()
-	if b == nil || e == nil {
+	if e == nil {
 		return nil
+	}
+	b := p.currentBot()
+	if b == nil {
+		if p.Host() == nil || p.idle.Load() {
+			return nil
+		}
+		return errBotStarting
 	}
 	switch e.EventType {
 	case eventTaskStateChanged:
@@ -94,6 +108,7 @@ func (p *telegramPlugin) run(ctx context.Context, host pluginsdk.Host) {
 
 	cfg, err := p.loadConfig(ctx, host)
 	if err != nil {
+		p.idle.Store(true)
 		if ctx.Err() == nil {
 			_ = store.setBotStatus(ctx, botStatus{LastError: err.Error()})
 		}
@@ -103,6 +118,7 @@ func (p *telegramPlugin) run(ctx context.Context, host pluginsdk.Host) {
 	tg := p.newClient(cfg.BotToken)
 	me, ok := p.connect(ctx, tg, store)
 	if !ok {
+		p.idle.Store(true)
 		return
 	}
 
