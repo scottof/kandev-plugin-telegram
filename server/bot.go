@@ -27,6 +27,9 @@ type bot struct {
 	// sentMemo is the last sent interaction set written to state, kept in
 	// case the write failed. Only the alert loop touches it.
 	sentMemo sentSet
+	// settledMemo is the users each queued task alert is settled for, kept in
+	// case the queue write failed. Only the alert loop touches it.
+	settledMemo map[taskAlertKey]map[int64]bool
 	// queueMu serialises read-modify-write of the task alert queue in state.
 	queueMu sync.Mutex
 }

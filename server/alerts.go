@@ -70,10 +70,27 @@ func (b *bot) enqueue(ctx context.Context, qa queuedTaskAlert) error {
 	return b.store.setTaskAlertQueue(ctx, capQueue(append(queue, qa)))
 }
 
-// settleQueued records the users each alert is now settled for and drops
-// alerts settled for every allowed user. Alerts queued while the send was in
-// flight stay for the next cycle.
-func (b *bot) settleQueued(ctx context.Context, settled map[taskAlertKey][]int64) error {
+// markSettled records in memory that a queued task alert is settled for a
+// user, so a failed queue write cannot make the next cycle send it again.
+func (b *bot) markSettled(k taskAlertKey, userID int64) {
+	if b.settledMemo == nil {
+		b.settledMemo = map[taskAlertKey]map[int64]bool{}
+	}
+	if b.settledMemo[k] == nil {
+		b.settledMemo[k] = map[int64]bool{}
+	}
+	b.settledMemo[k][userID] = true
+}
+
+func (b *bot) isSettled(q queuedTaskAlert, userID int64) bool {
+	return q.settledFor(userID) || b.settledMemo[q.key()][userID]
+}
+
+// settleQueued writes the in-memory settled users into the stored queue and
+// drops alerts settled for every allowed user. Alerts queued while the send
+// was in flight stay for the next cycle. Once the write lands, the memory
+// copy is only kept for alerts still queued.
+func (b *bot) settleQueued(ctx context.Context) error {
 	b.queueMu.Lock()
 	defer b.queueMu.Unlock()
 	queue, err := b.store.taskAlertQueue(ctx)
@@ -82,7 +99,7 @@ func (b *bot) settleQueued(ctx context.Context, settled map[taskAlertKey][]int64
 	}
 	kept := queue[:0]
 	for _, q := range queue {
-		for _, userID := range settled[q.key()] {
+		for userID := range b.settledMemo[q.key()] {
 			if !q.settledFor(userID) {
 				q.SettledFor = append(q.SettledFor, userID)
 			}
@@ -91,7 +108,19 @@ func (b *bot) settleQueued(ctx context.Context, settled map[taskAlertKey][]int64
 			kept = append(kept, q)
 		}
 	}
-	return b.store.setTaskAlertQueue(ctx, kept)
+	if err := b.store.setTaskAlertQueue(ctx, kept); err != nil {
+		return err
+	}
+	stillQueued := make(map[taskAlertKey]bool, len(kept))
+	for _, q := range kept {
+		stillQueued[q.key()] = true
+	}
+	for k := range b.settledMemo {
+		if !stillQueued[k] {
+			delete(b.settledMemo, k)
+		}
+	}
+	return nil
 }
 
 func (b *bot) settledForAll(q queuedTaskAlert) bool {
@@ -129,7 +158,6 @@ func (b *bot) flushAlerts(ctx context.Context) (retry bool) {
 
 	titles := map[string]string{}
 	nextSent := sentSet{}
-	settledQueued := map[taskAlertKey][]int64{}
 	anySettled := false
 	var rejected string
 	for _, userID := range b.cfg.AllowedUserIDs {
@@ -145,7 +173,7 @@ func (b *bot) flushAlerts(ctx context.Context) (retry bool) {
 		}
 		var keys []taskAlertKey
 		for _, q := range queued {
-			if !q.settledFor(userID) {
+			if !b.isSettled(q, userID) {
 				alerts = append(alerts, q.alert)
 				keys = append(keys, q.key())
 			}
@@ -167,7 +195,7 @@ func (b *bot) flushAlerts(ctx context.Context) (retry bool) {
 			nextSent.add(userID, id)
 		}
 		for _, k := range keys {
-			settledQueued[k] = append(settledQueued[k], userID)
+			b.markSettled(k, userID)
 		}
 	}
 	if anySettled {
@@ -175,7 +203,7 @@ func (b *bot) flushAlerts(ctx context.Context) (retry bool) {
 	}
 
 	if len(queued) > 0 {
-		if err := b.settleQueued(ctx, settledQueued); err != nil && ctx.Err() == nil {
+		if err := b.settleQueued(ctx); err != nil && ctx.Err() == nil {
 			log.Printf("telegram: %v", err)
 		}
 	}

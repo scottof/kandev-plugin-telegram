@@ -567,6 +567,24 @@ func TestOnEvent_QueueWriteFailureAsksForRedeliveryWithoutMarker(t *testing.T) {
 	require.Len(t, tg.sentMessages(), 1)
 }
 
+func TestFlushAlerts_QueueWriteFailureDoesNotRepeatTaskAlerts(t *testing.T) {
+	ctx := context.Background()
+	b, host, tg := newAlertBot(t, 42, 43)
+	queueAlert(t, b, alert{Kind: alertCompleted, TaskID: "task-1", TaskTitle: "Fix login"})
+	host.setStateErr = map[string]error{stateKeyTaskAlertQueue: errors.New("state unavailable")}
+
+	b.flushAlerts(ctx)
+	require.Len(t, tg.sentMessages(), 2)
+	b.flushAlerts(ctx)
+	require.Len(t, tg.sentMessages(), 2, "the in-memory settled set covers a failed queue write")
+
+	host.setStateErr = nil
+	b.flushAlerts(ctx)
+	require.Len(t, tg.sentMessages(), 2)
+	require.Empty(t, queuedAlerts(t, b), "the queue write is retried once state works again")
+	require.Empty(t, b.settledMemo, "settled alerts are forgotten once they leave the stored queue")
+}
+
 func TestFlushAlerts_SentSetWriteFailureDoesNotRepeatAlerts(t *testing.T) {
 	ctx := context.Background()
 	b, host, tg := newAlertBot(t)
