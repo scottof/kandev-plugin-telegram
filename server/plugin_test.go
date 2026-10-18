@@ -271,3 +271,28 @@ func TestOnEvent_IdleBotDropsEvents(t *testing.T) {
 	err := p.OnEvent(context.Background(), &pluginsdk.Event{EventType: "task.state_changed"})
 	require.NoError(t, err, "a bot left idle by missing settings never retries")
 }
+
+func TestSetHost_UnauthorizedTokenGoesIdleWithoutRetrying(t *testing.T) {
+	host := newFakeHost()
+	host.config = validConfig()
+	tg := newFakeTelegram()
+	tg.meErr = &telegramAPIError{Method: "getMe", Code: 401, Description: "Unauthorized"}
+	p, _ := newTestPlugin(context.Background(), tg)
+
+	p.SetHost(host)
+	select {
+	case <-p.done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("a rejected token kept the bot retrying")
+	}
+	require.Empty(t, p.clock.(*fakeClock).sleeps())
+	require.Nil(t, p.currentBot())
+
+	status, err := stateStore{host: host}.botStatus(context.Background())
+	require.NoError(t, err)
+	require.False(t, status.Connected)
+	require.Equal(t, "telegram getMe: 401 Unauthorized", status.LastError)
+
+	err = p.OnEvent(context.Background(), &pluginsdk.Event{EventType: "task.state_changed"})
+	require.NoError(t, err, "events are not redelivered to a bot that will not start")
+}

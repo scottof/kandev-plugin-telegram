@@ -156,7 +156,9 @@ func (p *telegramPlugin) loadConfig(ctx context.Context, host pluginsdk.Host) (c
 	}
 }
 
-// connect calls getMe until the token works, recording failures in status.
+// connect calls getMe until the token works, recording failures in status. A
+// 401 means the token itself is wrong, so it gives up: retrying would hold
+// every event in redelivery, and saving a new token restarts the process.
 func (p *telegramPlugin) connect(ctx context.Context, tg telegramClient, store stateStore) (tgUser, bool) {
 	var wait backoff
 	for {
@@ -168,6 +170,9 @@ func (p *telegramPlugin) connect(ctx context.Context, tg telegramClient, store s
 			return tgUser{}, false
 		}
 		_ = store.setBotStatus(ctx, botStatus{LastError: err.Error()})
+		if isUnauthorized(err) {
+			return tgUser{}, false
+		}
 		if p.clock.Sleep(ctx, wait.next()) != nil {
 			return tgUser{}, false
 		}
