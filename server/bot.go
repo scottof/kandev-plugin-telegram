@@ -24,8 +24,8 @@ type bot struct {
 	wake           chan struct{}
 	reconcileEvery time.Duration
 	debounce       time.Duration
-	queueMu        sync.Mutex
-	queued         []alert
+	// queueMu serialises read-modify-write of the task alert queue in state.
+	queueMu sync.Mutex
 }
 
 func newBot(host pluginsdk.Host, tg telegramClient, cfg config, clk clock, botUsername string) *bot {

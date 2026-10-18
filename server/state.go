@@ -14,6 +14,7 @@ const (
 	stateKeyOffset           = "telegram_offset"
 	stateKeySentInteractions = "sent_interactions"
 	stateKeyTaskAlerts       = "task_alerts"
+	stateKeyTaskAlertQueue   = "task_alert_queue"
 	stateKeyBotStatus        = "bot_status"
 
 	// taskAlertLogCap bounds the task alert dedupe log kept in Host state.
@@ -142,6 +143,46 @@ func (s stateStore) setTaskAlerts(ctx context.Context, log taskAlertLog) error {
 		entries = append(entries, map[string]any{"task_id": e.TaskID, "marker": e.Marker})
 	}
 	return s.set(ctx, stateKeyTaskAlerts, map[string]any{"entries": entries})
+}
+
+// queuedTaskAlert is a task alert waiting for a settled send. Marker is the
+// same value as its task alert log entry, so a redelivered event queues once.
+type queuedTaskAlert struct {
+	alert
+	Marker string
+}
+
+func (s stateStore) taskAlertQueue(ctx context.Context) ([]queuedTaskAlert, error) {
+	value, err := s.get(ctx, stateKeyTaskAlertQueue)
+	if err != nil {
+		return nil, err
+	}
+	var queue []queuedTaskAlert
+	items, _ := value["alerts"].([]any)
+	for _, raw := range items {
+		item, _ := raw.(map[string]any)
+		var q queuedTaskAlert
+		kind, _ := item["kind"].(string)
+		q.Kind = alertKind(kind)
+		q.TaskID, _ = item["task_id"].(string)
+		q.TaskTitle, _ = item["title"].(string)
+		q.Detail, _ = item["detail"].(string)
+		q.Marker, _ = item["marker"].(string)
+		if q.TaskID != "" {
+			queue = append(queue, q)
+		}
+	}
+	return queue, nil
+}
+
+func (s stateStore) setTaskAlertQueue(ctx context.Context, queue []queuedTaskAlert) error {
+	items := make([]any, 0, len(queue))
+	for _, q := range queue {
+		items = append(items, map[string]any{
+			"kind": string(q.Kind), "task_id": q.TaskID, "title": q.TaskTitle, "detail": q.Detail, "marker": q.Marker,
+		})
+	}
+	return s.set(ctx, stateKeyTaskAlertQueue, map[string]any{"alerts": items})
 }
 
 // botStatus is what the settings card shows. It never holds the token.

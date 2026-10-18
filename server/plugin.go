@@ -89,12 +89,12 @@ func (p *telegramPlugin) OnEvent(ctx context.Context, e *pluginsdk.Event) error 
 	}
 	switch e.EventType {
 	case eventTaskStateChanged:
-		a, ok, err := b.taskAlertFromEvent(ctx, e.Payload)
+		_, ok, err := b.taskAlertFromEvent(ctx, e.Payload)
 		if err != nil {
 			return err
 		}
 		if ok {
-			b.enqueue(a)
+			b.nudge()
 		}
 	case eventPendingActionChanged:
 		b.nudge()

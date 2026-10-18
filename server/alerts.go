@@ -53,38 +53,51 @@ func (b *bot) nudge() {
 	}
 }
 
-func (b *bot) enqueue(a alert) {
+// enqueue stores a task alert in Host state until a send settles it, so a
+// restart during the debounce or a Telegram outage cannot lose it.
+func (b *bot) enqueue(ctx context.Context, qa queuedTaskAlert) error {
 	b.queueMu.Lock()
-	b.queued = capQueue(append(b.queued, a))
-	b.queueMu.Unlock()
-	b.nudge()
+	defer b.queueMu.Unlock()
+	queue, err := b.store.taskAlertQueue(ctx)
+	if err != nil {
+		return err
+	}
+	for _, q := range queue {
+		if q.TaskID == qa.TaskID && q.Marker == qa.Marker {
+			return nil
+		}
+	}
+	return b.store.setTaskAlertQueue(ctx, capQueue(append(queue, qa)))
+}
+
+// settleQueued removes delivered alerts. Alerts queued while the send was in
+// flight stay for the next cycle.
+func (b *bot) settleQueued(ctx context.Context, delivered []queuedTaskAlert) error {
+	b.queueMu.Lock()
+	defer b.queueMu.Unlock()
+	queue, err := b.store.taskAlertQueue(ctx)
+	if err != nil {
+		return err
+	}
+	done := make(map[queuedTaskAlert]bool, len(delivered))
+	for _, q := range delivered {
+		done[q] = true
+	}
+	kept := queue[:0]
+	for _, q := range queue {
+		if !done[q] {
+			kept = append(kept, q)
+		}
+	}
+	return b.store.setTaskAlertQueue(ctx, kept)
 }
 
 // capQueue keeps the newest maxQueuedAlerts alerts.
-func capQueue(alerts []alert) []alert {
-	if len(alerts) > maxQueuedAlerts {
-		return alerts[len(alerts)-maxQueuedAlerts:]
+func capQueue(queue []queuedTaskAlert) []queuedTaskAlert {
+	if len(queue) > maxQueuedAlerts {
+		return queue[len(queue)-maxQueuedAlerts:]
 	}
-	return alerts
-}
-
-// requeue puts undelivered task alerts back in front of the queue without
-// waking the loop, so a Telegram outage retries on the regular interval.
-func (b *bot) requeue(alerts []alert) {
-	if len(alerts) == 0 {
-		return
-	}
-	b.queueMu.Lock()
-	b.queued = capQueue(append(append([]alert(nil), alerts...), b.queued...))
-	b.queueMu.Unlock()
-}
-
-func (b *bot) drainQueued() []alert {
-	b.queueMu.Lock()
-	defer b.queueMu.Unlock()
-	out := b.queued
-	b.queued = nil
-	return out
+	return queue
 }
 
 // flushAlerts collects new pending interactions and queued task alerts and
@@ -96,12 +109,22 @@ func (b *bot) flushAlerts(ctx context.Context) {
 	if err != nil && ctx.Err() == nil {
 		log.Printf("telegram: reconciling pending interactions: %v", err)
 	}
-	queued := b.drainQueued()
-	alerts = append(alerts, queued...)
+	queued, err := b.store.taskAlertQueue(ctx)
+	if err != nil && ctx.Err() == nil {
+		log.Printf("telegram: %v", err)
+	}
+	for _, q := range queued {
+		alerts = append(alerts, q.alert)
+	}
 	if len(alerts) > 0 && !b.broadcast(ctx, formatAlerts(alerts, b.cfg.KandevURL)) {
-		// Nobody was reached: keep everything for the next cycle.
-		b.requeue(queued)
+		// Nobody was reached: everything stays for the next cycle, which runs
+		// on the regular interval so an outage is not retried in a tight loop.
 		return
+	}
+	if len(queued) > 0 {
+		if err := b.settleQueued(ctx, queued); err != nil && ctx.Err() == nil {
+			log.Printf("telegram: %v", err)
+		}
 	}
 	if nextSent != nil {
 		if err := b.store.setSentInteractions(ctx, nextSent); err != nil && ctx.Err() == nil {
@@ -224,7 +247,8 @@ func (b *bot) sendAlert(ctx context.Context, userID int64, msg outMessage) (degr
 	return err, nil
 }
 
-// taskAlertFromEvent maps a task.state_changed payload to an alert. Every
+// taskAlertFromEvent maps a task.state_changed payload to an alert and queues
+// it in Host state; ok reports a new alert worth waking the loop for. Every
 // finished agent turn moves a task to REVIEW, so that alert is opt-in. An
 // agent crash also lands in REVIEW; FAILED only covers start failures.
 func (b *bot) taskAlertFromEvent(ctx context.Context, payload map[string]any) (alert, bool, error) {
@@ -259,15 +283,21 @@ func (b *bot) taskAlertFromEvent(ctx context.Context, payload map[string]any) (a
 	if alertLog.seen(taskID, marker) {
 		return alert{}, false, nil
 	}
-	if err := b.store.setTaskAlerts(ctx, alertLog.add(taskID, marker)); err != nil {
-		return alert{}, false, err
-	}
 
 	title, _ := payload["title"].(string)
 	if title == "" {
 		title = untitledTask
 	}
-	return alert{Kind: kind, TaskID: taskID, TaskTitle: title}, true, nil
+	a := alert{Kind: kind, TaskID: taskID, TaskTitle: title}
+	// Queue before marking seen: if the marker write fails, the redelivered
+	// event finds the alert already queued instead of losing it.
+	if err := b.enqueue(ctx, queuedTaskAlert{alert: a, Marker: marker}); err != nil {
+		return alert{}, false, err
+	}
+	if err := b.store.setTaskAlerts(ctx, alertLog.add(taskID, marker)); err != nil {
+		return alert{}, false, err
+	}
+	return a, true, nil
 }
 
 func sameSet(a, b map[string]bool) bool {

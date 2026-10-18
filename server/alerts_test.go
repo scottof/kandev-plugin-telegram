@@ -133,7 +133,7 @@ func TestFlushAlerts_ListPendingErrorStillSendsQueuedTaskAlerts(t *testing.T) {
 	ctx := context.Background()
 	b, host, tg := newAlertBot(t)
 	host.data().listPendingErr = errors.New("unavailable")
-	b.enqueue(alert{Kind: alertCompleted, TaskID: "task-1", TaskTitle: "Fix login"})
+	queueAlert(t, b, alert{Kind: alertCompleted, TaskID: "task-1", TaskTitle: "Fix login"})
 	b.flushAlerts(ctx)
 	require.Len(t, tg.sentMessages(), 1)
 	require.Equal(t, "Finished: Fix login", tg.sentMessages()[0].Msg.Text)
@@ -295,7 +295,7 @@ func TestFlushAlerts_TransientSendFailureRetriesNextCycle(t *testing.T) {
 	b, host, tg := newAlertBot(t)
 	tg.sendErr = errors.New("telegram sendMessage: request failed: connection reset")
 	host.setPending(permission("i1", "task-1", "x"))
-	b.enqueue(alert{Kind: alertCompleted, TaskID: "task-2", TaskTitle: "Add cache"})
+	queueAlert(t, b, alert{Kind: alertCompleted, TaskID: "task-2", TaskTitle: "Add cache"})
 
 	b.flushAlerts(ctx)
 	sent, err := b.store.sentInteractions(ctx)
@@ -329,13 +329,13 @@ func TestFlushAlerts_PermanentClientErrorSettlesAndIsRecorded(t *testing.T) {
 	b, host, tg := newAlertBot(t)
 	tg.sendErr = badRequest("Bad Request: chat not found")
 	host.setPending(permission("i1", "task-1", "x"))
-	b.enqueue(alert{Kind: alertCompleted, TaskID: "task-2", TaskTitle: "Add cache"})
+	queueAlert(t, b, alert{Kind: alertCompleted, TaskID: "task-2", TaskTitle: "Add cache"})
 
 	b.flushAlerts(ctx)
 	sent, err := b.store.sentInteractions(ctx)
 	require.NoError(t, err)
 	require.Equal(t, map[string]bool{"i1": true}, sent, "a 400 will not heal by retrying")
-	require.Empty(t, b.drainQueued(), "a settled task alert is not requeued")
+	require.Empty(t, queuedAlerts(t, b), "a settled task alert is not requeued")
 
 	attempts := tg.sendAttempts()
 	b.flushAlerts(ctx)
@@ -410,9 +410,9 @@ func TestFlushAlerts_SuccessClearsAlertError(t *testing.T) {
 func TestEnqueue_CapsQueueDroppingOldest(t *testing.T) {
 	b, _, _ := newAlertBot(t)
 	for i := 0; i < maxQueuedAlerts+5; i++ {
-		b.enqueue(alert{Kind: alertCompleted, TaskID: fmt.Sprintf("task-%d", i), TaskTitle: "t"})
+		queueAlert(t, b, alert{Kind: alertCompleted, TaskID: fmt.Sprintf("task-%d", i), TaskTitle: "t"})
 	}
-	queued := b.drainQueued()
+	queued := queuedAlerts(t, b)
 	require.Len(t, queued, maxQueuedAlerts)
 	require.Equal(t, "task-5", queued[0].TaskID, "the oldest alerts are dropped")
 	require.Equal(t, fmt.Sprintf("task-%d", maxQueuedAlerts+4), queued[len(queued)-1].TaskID)
@@ -424,11 +424,95 @@ func TestFlushAlerts_RequeueDuringOutageKeepsTheCap(t *testing.T) {
 	tg.sendErr = errors.New("telegram sendMessage: request failed: connection reset")
 	for round := 0; round < 3; round++ {
 		for i := 0; i < maxQueuedAlerts; i++ {
-			b.enqueue(alert{Kind: alertCompleted, TaskID: fmt.Sprintf("task-%d-%d", round, i), TaskTitle: "t"})
+			queueAlert(t, b, alert{Kind: alertCompleted, TaskID: fmt.Sprintf("task-%d-%d", round, i), TaskTitle: "t"})
 		}
 		b.flushAlerts(ctx)
 	}
-	queued := b.drainQueued()
+	queued := queuedAlerts(t, b)
 	require.Len(t, queued, maxQueuedAlerts)
 	require.Equal(t, "task-2-0", queued[0].TaskID, "the newest alerts survive an outage")
+}
+
+// queueAlert stores a task alert as OnEvent would, keyed on its task id.
+func queueAlert(t *testing.T, b *bot, a alert) {
+	t.Helper()
+	require.NoError(t, b.enqueue(context.Background(), queuedTaskAlert{alert: a, Marker: a.TaskID}))
+}
+
+func queuedAlerts(t *testing.T, b *bot) []alert {
+	t.Helper()
+	queue, err := b.store.taskAlertQueue(context.Background())
+	require.NoError(t, err)
+	out := make([]alert, 0, len(queue))
+	for _, q := range queue {
+		out = append(out, q.alert)
+	}
+	return out
+}
+
+func completedEvent(taskID, updatedAt string) *pluginsdk.Event {
+	return &pluginsdk.Event{EventType: "task.state_changed", Payload: stateChanged(taskID, "IN_PROGRESS", "COMPLETED", updatedAt)}
+}
+
+func TestOnEvent_TaskAlertSurvivesRestartBeforeFlush(t *testing.T) {
+	ctx := context.Background()
+	b, host, _ := newAlertBot(t)
+	p := &telegramPlugin{bot: b}
+	require.NoError(t, p.OnEvent(ctx, completedEvent("task-1", "2026-10-18T10:00:00Z")))
+
+	// The process dies during the debounce; the next one shares only Host state.
+	tg2 := newFakeTelegram()
+	b2 := newBot(host, tg2, b.cfg, newFakeClock(), "kandev_bot")
+	b2.flushAlerts(ctx)
+	msgs := tg2.sentMessages()
+	require.Len(t, msgs, 1)
+	require.Equal(t, "Finished: Fix login", msgs[0].Msg.Text)
+
+	b2.flushAlerts(ctx)
+	require.Len(t, tg2.sentMessages(), 1, "a delivered alert leaves the queue")
+}
+
+func TestOnEvent_TaskAlertSurvivesOutageAndRestart(t *testing.T) {
+	ctx := context.Background()
+	b, host, tg := newAlertBot(t)
+	tg.sendErr = errors.New("telegram sendMessage: request failed: connection reset")
+	p := &telegramPlugin{bot: b}
+	require.NoError(t, p.OnEvent(ctx, completedEvent("task-1", "2026-10-18T10:00:00Z")))
+	b.flushAlerts(ctx)
+	require.Empty(t, tg.sentMessages())
+
+	tg2 := newFakeTelegram()
+	b2 := newBot(host, tg2, b.cfg, newFakeClock(), "kandev_bot")
+	b2.flushAlerts(ctx)
+	require.Len(t, tg2.sentMessages(), 1)
+}
+
+func TestOnEvent_RedeliveredEventIsQueuedOnce(t *testing.T) {
+	ctx := context.Background()
+	b, host, tg := newAlertBot(t)
+	p := &telegramPlugin{bot: b}
+
+	host.setStateErr = map[string]error{stateKeyTaskAlerts: errors.New("state unavailable")}
+	require.Error(t, p.OnEvent(ctx, completedEvent("task-1", "t1")), "a failed marker write asks for redelivery")
+	host.setStateErr = nil
+	require.NoError(t, p.OnEvent(ctx, completedEvent("task-1", "t1")))
+	require.NoError(t, p.OnEvent(ctx, completedEvent("task-1", "t1")))
+	require.Len(t, queuedAlerts(t, b), 1)
+
+	b.flushAlerts(ctx)
+	require.Len(t, tg.sentMessages(), 1)
+	require.Equal(t, "Finished: Fix login", tg.sentMessages()[0].Msg.Text)
+}
+
+func TestOnEvent_QueueWriteFailureAsksForRedeliveryWithoutMarker(t *testing.T) {
+	ctx := context.Background()
+	b, host, tg := newAlertBot(t)
+	p := &telegramPlugin{bot: b}
+
+	host.setStateErr = map[string]error{stateKeyTaskAlertQueue: errors.New("state unavailable")}
+	require.Error(t, p.OnEvent(ctx, completedEvent("task-1", "t1")))
+	host.setStateErr = nil
+	require.NoError(t, p.OnEvent(ctx, completedEvent("task-1", "t1")), "the redelivery is not skipped as a duplicate")
+	b.flushAlerts(ctx)
+	require.Len(t, tg.sentMessages(), 1)
 }
