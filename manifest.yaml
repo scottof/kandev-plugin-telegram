@@ -31,6 +31,18 @@ capabilities:
   api_read: ["workspaces", "workflows", "repositories", "tasks", "interactions"]
   api_write: ["tasks"]
 
+# Called only by the settings card through host.api.fetch. Manifest actions
+# need a workspace, task or repository scope, which the settings page lacks.
+webhooks:
+  - key: "status"
+    description: "Bot connection status for the settings card."
+    method: "GET"
+    access: "authenticated"
+  - key: "test"
+    description: "Checks the token and sends a test message to the allowed users."
+    method: "POST"
+    access: "authenticated"
+
 ui:
   bundle: "/ui/bundle.js"
 

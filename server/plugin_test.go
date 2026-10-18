@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sync/atomic"
 	"testing"
@@ -112,4 +113,131 @@ func TestSetHost_RetriesGetMeAndRecordsError(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, status.LastError, "401")
 	require.Nil(t, p.currentBot())
+}
+
+func webhook(t *testing.T, p *telegramPlugin, key, method string) (int32, map[string]any) {
+	t.Helper()
+	resp, err := p.HandleWebhook(context.Background(), &pluginsdk.WebhookRequest{WebhookKey: key, Method: method})
+	require.NoError(t, err)
+	require.Equal(t, "application/json", resp.Headers["Content-Type"])
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(resp.Body, &body))
+	require.NotContains(t, string(resp.Body), testToken)
+	return resp.Status, body
+}
+
+func TestWebhookStatus_NotConfigured(t *testing.T) {
+	p := &telegramPlugin{}
+	p.UnimplementedPlugin.SetHost(newFakeHost())
+	status, body := webhook(t, p, "status", "GET")
+	require.Equal(t, int32(200), status)
+	require.Equal(t, false, body["configured"])
+	require.Equal(t, []any{"bot_token", "kandev_url"}, body["missing"])
+	require.Equal(t, false, body["running"])
+}
+
+func TestWebhookStatus_InvalidConfig(t *testing.T) {
+	host := newFakeHost()
+	host.config = validConfig()
+	host.config["kandev_url"] = "kandev.local"
+	p := &telegramPlugin{}
+	p.UnimplementedPlugin.SetHost(host)
+	_, body := webhook(t, p, "status", "GET")
+	require.Equal(t, false, body["configured"])
+	require.Contains(t, body["config_error"], "kandev_url")
+}
+
+func TestWebhookStatus_Running(t *testing.T) {
+	b, host, _ := newAlertBot(t, 42, 43)
+	host.config = validConfig()
+	require.NoError(t, b.store.setBotStatus(context.Background(), botStatus{Connected: true, Username: "kandev_bot", LastUpdateAt: "2026-10-18T10:00:00Z"}))
+	p := &telegramPlugin{bot: b}
+	p.UnimplementedPlugin.SetHost(host)
+
+	status, body := webhook(t, p, "status", "GET")
+	require.Equal(t, int32(200), status)
+	require.Equal(t, true, body["configured"])
+	require.Equal(t, true, body["running"])
+	require.Equal(t, true, body["connected"])
+	require.Equal(t, "kandev_bot", body["username"])
+	require.Equal(t, "2026-10-18T10:00:00Z", body["last_update_at"])
+	require.InEpsilon(t, float64(1), body["allowed_users"], 0)
+}
+
+func TestWebhookStatus_NoHost(t *testing.T) {
+	status, body := webhook(t, &telegramPlugin{}, "status", "GET")
+	require.Equal(t, int32(503), status)
+	require.Contains(t, body["error"], "not ready")
+}
+
+func TestWebhookTest_SendsToAllowedUsers(t *testing.T) {
+	b, host, tg := newAlertBot(t, 42, 43)
+	p := &telegramPlugin{bot: b}
+	p.UnimplementedPlugin.SetHost(host)
+
+	status, body := webhook(t, p, "test", "POST")
+	require.Equal(t, int32(200), status)
+	require.Equal(t, true, body["ok"])
+	require.Equal(t, "kandev_bot", body["username"])
+	require.InEpsilon(t, float64(2), body["sent"], 0)
+	sent := tg.sentMessages()
+	require.Len(t, sent, 2)
+	require.Equal(t, "Test message from kandev. Alerts will arrive in this chat.", sent[0].Msg.Text)
+}
+
+func TestWebhookTest_ReportsUnreachableUsers(t *testing.T) {
+	b, host, tg := newAlertBot(t, 42, 43)
+	tg.sendErrTo = map[int64]error{
+		42: &telegramAPIError{Method: "sendMessage", Code: 403, Description: "Forbidden"},
+		43: &telegramAPIError{Method: "sendMessage", Code: 403, Description: "Forbidden"},
+	}
+	p := &telegramPlugin{bot: b}
+	p.UnimplementedPlugin.SetHost(host)
+
+	status, body := webhook(t, p, "test", "POST")
+	require.Equal(t, int32(200), status)
+	require.Equal(t, false, body["ok"])
+	require.Equal(t, "Could not message 42, 43. Each allowed user must send /start to @kandev_bot first.", body["error"])
+}
+
+func TestWebhookTest_NoAllowedUsers(t *testing.T) {
+	b, host, _ := newAlertBot(t)
+	b.cfg.AllowedUserIDs = nil
+	p := &telegramPlugin{bot: b}
+	p.UnimplementedPlugin.SetHost(host)
+	_, body := webhook(t, p, "test", "POST")
+	require.Equal(t, false, body["ok"])
+	require.Equal(t, "No allowed user ids are set.", body["error"])
+}
+
+func TestWebhookTest_GetMeFailure(t *testing.T) {
+	b, host, tg := newAlertBot(t)
+	tg.meErr = &telegramAPIError{Method: "getMe", Code: 401, Description: "Unauthorized"}
+	p := &telegramPlugin{bot: b}
+	p.UnimplementedPlugin.SetHost(host)
+	_, body := webhook(t, p, "test", "POST")
+	require.Equal(t, false, body["ok"])
+	require.Equal(t, "telegram getMe: 401 Unauthorized", body["error"])
+	require.Empty(t, tg.sentMessages())
+}
+
+func TestWebhookTest_BotNotRunning(t *testing.T) {
+	host := newFakeHost()
+	require.NoError(t, stateStore{host: host}.setBotStatus(context.Background(), botStatus{LastError: "missing settings: bot_token"}))
+	p := &telegramPlugin{}
+	p.UnimplementedPlugin.SetHost(host)
+	status, body := webhook(t, p, "test", "POST")
+	require.Equal(t, int32(409), status)
+	require.Equal(t, "The bot is not running: missing settings: bot_token", body["error"])
+}
+
+func TestWebhook_WrongMethodAndUnknownKey(t *testing.T) {
+	p := &telegramPlugin{}
+	p.UnimplementedPlugin.SetHost(newFakeHost())
+	status, _ := webhook(t, p, "status", "POST")
+	require.Equal(t, int32(405), status)
+	status, _ = webhook(t, p, "test", "GET")
+	require.Equal(t, int32(405), status)
+	status, _ = webhook(t, p, "ping", "POST")
+	require.Equal(t, int32(404), status)
 }
