@@ -73,7 +73,7 @@ func TestFlushAlerts_PrunesResolvedInteractions(t *testing.T) {
 	b.flushAlerts(ctx)
 	sent, err := b.store.sentInteractions(ctx)
 	require.NoError(t, err)
-	require.Equal(t, map[string]bool{"i2": true}, sent)
+	require.Equal(t, sentSet{42: {"i2": true}}, sent)
 }
 
 func TestFlushAlerts_BatchesBurstIntoOneMessage(t *testing.T) {
@@ -102,7 +102,7 @@ func TestFlushAlerts_PagesThroughListPending(t *testing.T) {
 	b.flushAlerts(ctx)
 	sent, err := b.store.sentInteractions(ctx)
 	require.NoError(t, err)
-	require.Len(t, sent, pendingPageSize+3)
+	require.Len(t, sent[42], pendingPageSize+3)
 }
 
 func TestFlushAlerts_ClarificationAndUnknownTaskTitle(t *testing.T) {
@@ -151,6 +151,56 @@ func TestFlushAlerts_ForbiddenUserDoesNotBlockOthers(t *testing.T) {
 
 	b.flushAlerts(ctx)
 	require.Len(t, tg.sentMessages(), 1, "the interaction is marked sent even if one user could not be reached")
+}
+
+func TestFlushAlerts_SettlesPerUser(t *testing.T) {
+	ctx := context.Background()
+	b, host, tg := newAlertBot(t, 42, 43)
+	tg.setSendErrTo(map[int64]error{
+		42: &telegramAPIError{Method: "sendMessage", Code: 403, Description: "Forbidden: bot was blocked by the user"},
+		43: errors.New("telegram sendMessage: request failed: connection reset"),
+	})
+	host.setPending(permission("i1", "task-1", "Run npm test"))
+	queueAlert(t, b, alert{Kind: alertCompleted, TaskID: "task-2", TaskTitle: "Add cache"})
+
+	b.flushAlerts(ctx)
+	require.Empty(t, tg.sentMessages())
+	require.Len(t, queuedAlerts(t, b), 1, "the task alert stays queued for the user not reached yet")
+	sent, err := b.store.sentInteractions(ctx)
+	require.NoError(t, err)
+	require.Equal(t, sentSet{42: {"i1": true}}, sent, "only the user with a permanent error is settled")
+
+	attemptsTo42 := tg.sendAttemptsTo(42)
+	tg.setSendErrTo(nil)
+	b.flushAlerts(ctx)
+	require.Equal(t, attemptsTo42, tg.sendAttemptsTo(42), "a settled user is not retried")
+	msgs := tg.sentTo(43)
+	require.Len(t, msgs, 1)
+	require.Contains(t, msgs[0].Msg.Text, "2 updates from kandev:")
+	require.Empty(t, queuedAlerts(t, b))
+
+	b.flushAlerts(ctx)
+	require.Len(t, tg.sentMessages(), 1, "nothing is resent once every user is settled")
+}
+
+func TestFlushAlerts_OneUserOutageDoesNotResendToTheOther(t *testing.T) {
+	ctx := context.Background()
+	b, host, tg := newAlertBot(t, 42, 43)
+	tg.setSendErrTo(map[int64]error{43: errors.New("telegram sendMessage: request failed: timeout")})
+	host.setPending(permission("i1", "task-1", "x"))
+	queueAlert(t, b, alert{Kind: alertCompleted, TaskID: "task-2", TaskTitle: "Add cache"})
+
+	b.flushAlerts(ctx)
+	require.Len(t, tg.sentTo(42), 1)
+	require.Len(t, queuedAlerts(t, b), 1)
+
+	// A restart in between keeps the per-user progress.
+	tg2 := newFakeTelegram()
+	b2 := newBot(host, tg2, b.cfg, newFakeClock(), "kandev_bot")
+	b2.flushAlerts(ctx)
+	require.Empty(t, tg2.sentTo(42), "the user already reached gets nothing twice")
+	require.Len(t, tg2.sentTo(43), 1)
+	require.Empty(t, queuedAlerts(t, b2))
 }
 
 func TestFlushAlerts_NoAllowedUsersSendsNothing(t *testing.T) {
@@ -317,7 +367,7 @@ func TestFlushAlerts_AllUsersForbiddenStillMarksSent(t *testing.T) {
 	b.flushAlerts(ctx)
 	sent, err := b.store.sentInteractions(ctx)
 	require.NoError(t, err)
-	require.Equal(t, map[string]bool{"i1": true}, sent, "a 403 will not heal by retrying")
+	require.Equal(t, sentSet{42: {"i1": true}}, sent, "a 403 will not heal by retrying")
 }
 
 func badRequest(description string) error {
@@ -334,7 +384,7 @@ func TestFlushAlerts_PermanentClientErrorSettlesAndIsRecorded(t *testing.T) {
 	b.flushAlerts(ctx)
 	sent, err := b.store.sentInteractions(ctx)
 	require.NoError(t, err)
-	require.Equal(t, map[string]bool{"i1": true}, sent, "a 400 will not heal by retrying")
+	require.Equal(t, sentSet{42: {"i1": true}}, sent, "a 400 will not heal by retrying")
 	require.Empty(t, queuedAlerts(t, b), "a settled task alert is not requeued")
 
 	attempts := tg.sendAttempts()
@@ -373,7 +423,7 @@ func TestFlushAlerts_RejectedButtonFallsBackToPlainMessage(t *testing.T) {
 
 	sent, err := b.store.sentInteractions(ctx)
 	require.NoError(t, err)
-	require.Equal(t, map[string]bool{"i1": true}, sent)
+	require.Equal(t, sentSet{42: {"i1": true}}, sent)
 	status, err := b.store.botStatus(ctx)
 	require.NoError(t, err)
 	require.Contains(t, status.AlertError, "button URL is invalid")
@@ -389,7 +439,7 @@ func TestFlushAlerts_RejectedFallbackSettles(t *testing.T) {
 	require.Equal(t, 2, tg.sendAttempts(), "one try with the button, one without")
 	sent, err := b.store.sentInteractions(ctx)
 	require.NoError(t, err)
-	require.Equal(t, map[string]bool{"i1": true}, sent)
+	require.Equal(t, sentSet{42: {"i1": true}}, sent)
 }
 
 func TestFlushAlerts_SuccessClearsAlertError(t *testing.T) {
@@ -532,5 +582,5 @@ func TestFlushAlerts_SentSetWriteFailureDoesNotRepeatAlerts(t *testing.T) {
 	require.Len(t, tg.sentMessages(), 1)
 	sent, err := b.store.sentInteractions(ctx)
 	require.NoError(t, err)
-	require.Equal(t, map[string]bool{"i1": true}, sent, "the write is retried once state works again")
+	require.Equal(t, sentSet{42: {"i1": true}}, sent, "the write is retried once state works again")
 }

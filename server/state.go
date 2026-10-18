@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strconv"
 
 	"github.com/kandev/kandev/pkg/pluginsdk"
 )
@@ -56,34 +57,74 @@ func (s stateStore) setOffset(ctx context.Context, offset int64) error {
 	return s.set(ctx, stateKeyOffset, map[string]any{"offset": offset})
 }
 
-// sentInteractions is the set of pending interaction ids already alerted.
-func (s stateStore) sentInteractions(ctx context.Context) (map[string]bool, error) {
+// sentSet holds, per allowed user, the pending interaction ids whose alert is
+// settled for that user: delivered, or refused by Telegram for good.
+type sentSet map[int64]map[string]bool
+
+func (s sentSet) has(userID int64, id string) bool { return s[userID][id] }
+
+func (s sentSet) add(userID int64, id string) {
+	if s[userID] == nil {
+		s[userID] = map[string]bool{}
+	}
+	s[userID][id] = true
+}
+
+func (s sentSet) equal(other sentSet) bool {
+	if len(s) != len(other) {
+		return false
+	}
+	for userID, ids := range s {
+		if !sameSet(ids, other[userID]) {
+			return false
+		}
+	}
+	return true
+}
+
+// sentInteractions reads the sent set. Struct keys must be strings, so user
+// ids are stored in decimal.
+func (s stateStore) sentInteractions(ctx context.Context) (sentSet, error) {
 	value, err := s.get(ctx, stateKeySentInteractions)
 	if err != nil {
 		return nil, err
 	}
-	sent := map[string]bool{}
-	ids, _ := value["ids"].([]any)
-	for _, id := range ids {
-		if s, ok := id.(string); ok {
-			sent[s] = true
+	sent := sentSet{}
+	users, _ := value["users"].(map[string]any)
+	for key, raw := range users {
+		userID, err := strconv.ParseInt(key, 10, 64)
+		if err != nil {
+			continue
+		}
+		ids, _ := raw.([]any)
+		for _, id := range ids {
+			if s, ok := id.(string); ok {
+				sent.add(userID, s)
+			}
 		}
 	}
 	return sent, nil
 }
 
-func (s stateStore) setSentInteractions(ctx context.Context, sent map[string]bool) error {
-	sorted := make([]string, 0, len(sent))
-	for id := range sent {
-		sorted = append(sorted, id)
+func (s stateStore) setSentInteractions(ctx context.Context, sent sentSet) error {
+	users := make(map[string]any, len(sent))
+	for userID, set := range sent {
+		if len(set) == 0 {
+			continue
+		}
+		sorted := make([]string, 0, len(set))
+		for id := range set {
+			sorted = append(sorted, id)
+		}
+		sort.Strings(sorted)
+		// Host state goes through structpb, which accepts []any but not []string.
+		ids := make([]any, len(sorted))
+		for i, id := range sorted {
+			ids[i] = id
+		}
+		users[strconv.FormatInt(userID, 10)] = ids
 	}
-	sort.Strings(sorted)
-	// Host state goes through structpb, which accepts []any but not []string.
-	ids := make([]any, len(sorted))
-	for i, id := range sorted {
-		ids[i] = id
-	}
-	return s.set(ctx, stateKeySentInteractions, map[string]any{"ids": ids})
+	return s.set(ctx, stateKeySentInteractions, map[string]any{"users": users})
 }
 
 // taskAlertEntry records the last alerted transition of one task. Marker is
@@ -145,11 +186,30 @@ func (s stateStore) setTaskAlerts(ctx context.Context, log taskAlertLog) error {
 	return s.set(ctx, stateKeyTaskAlerts, map[string]any{"entries": entries})
 }
 
-// queuedTaskAlert is a task alert waiting for a settled send. Marker is the
-// same value as its task alert log entry, so a redelivered event queues once.
+// queuedTaskAlert is a task alert waiting until every allowed user is
+// settled. Marker is the same value as its task alert log entry, so a
+// redelivered event queues once. SettledFor lists the users already settled.
 type queuedTaskAlert struct {
 	alert
+	Marker     string
+	SettledFor []int64
+}
+
+// taskAlertKey identifies a queued task alert.
+type taskAlertKey struct {
+	TaskID string
 	Marker string
+}
+
+func (q queuedTaskAlert) key() taskAlertKey { return taskAlertKey{TaskID: q.TaskID, Marker: q.Marker} }
+
+func (q queuedTaskAlert) settledFor(userID int64) bool {
+	for _, id := range q.SettledFor {
+		if id == userID {
+			return true
+		}
+	}
+	return false
 }
 
 func (s stateStore) taskAlertQueue(ctx context.Context) ([]queuedTaskAlert, error) {
@@ -168,6 +228,12 @@ func (s stateStore) taskAlertQueue(ctx context.Context) ([]queuedTaskAlert, erro
 		q.TaskTitle, _ = item["title"].(string)
 		q.Detail, _ = item["detail"].(string)
 		q.Marker, _ = item["marker"].(string)
+		settled, _ := item["settled_for"].([]any)
+		for _, raw := range settled {
+			if n, ok := raw.(float64); ok {
+				q.SettledFor = append(q.SettledFor, int64(n))
+			}
+		}
 		if q.TaskID != "" {
 			queue = append(queue, q)
 		}
@@ -178,8 +244,13 @@ func (s stateStore) taskAlertQueue(ctx context.Context) ([]queuedTaskAlert, erro
 func (s stateStore) setTaskAlertQueue(ctx context.Context, queue []queuedTaskAlert) error {
 	items := make([]any, 0, len(queue))
 	for _, q := range queue {
+		settled := make([]any, len(q.SettledFor))
+		for i, id := range q.SettledFor {
+			settled[i] = id
+		}
 		items = append(items, map[string]any{
 			"kind": string(q.Kind), "task_id": q.TaskID, "title": q.TaskTitle, "detail": q.Detail, "marker": q.Marker,
+			"settled_for": settled,
 		})
 	}
 	return s.set(ctx, stateKeyTaskAlertQueue, map[string]any{"alerts": items})

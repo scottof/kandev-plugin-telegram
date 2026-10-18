@@ -334,6 +334,7 @@ type fakeTelegram struct {
 	// sendErrWithButtons fails only messages that carry URL buttons.
 	sendErrWithButtons error
 	attempts           int
+	attemptsTo         map[int64]int
 	onSend             func()
 	onDrained          func()
 }
@@ -393,6 +394,10 @@ func (f *fakeTelegram) SendMessage(_ context.Context, chatID int64, msg outMessa
 	f.mu.Lock()
 	hook := f.onSend
 	f.attempts++
+	if f.attemptsTo == nil {
+		f.attemptsTo = map[int64]int{}
+	}
+	f.attemptsTo[chatID]++
 	err := f.sendErr
 	if e, ok := f.sendErrTo[chatID]; ok {
 		err = e
@@ -420,6 +425,30 @@ func (f *fakeTelegram) sendAttempts() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.attempts
+}
+
+func (f *fakeTelegram) sendAttemptsTo(chatID int64) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.attemptsTo[chatID]
+}
+
+func (f *fakeTelegram) sentTo(chatID int64) []sentMessage {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []sentMessage
+	for _, m := range f.sent {
+		if m.ChatID == chatID {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+func (f *fakeTelegram) setSendErrTo(errs map[int64]error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.sendErrTo = errs
 }
 
 func (f *fakeTelegram) offsets() []int64 {

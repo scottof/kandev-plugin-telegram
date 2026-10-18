@@ -57,6 +57,9 @@ Requires kandev 0.95.0 or newer.
   lose them. Up to 50 task alerts wait; older ones are dropped. If Telegram refuses an alert for good (for example a
   link button it will not accept), the bot sends it once without buttons, and the status card shows the last refused
   alert.
+- Delivery is tracked per allowed user. A user Telegram cannot reach (for example one who never sent `/start`) does not
+  hold alerts back from the others, and a user who already got an alert is not sent it again while another user's
+  delivery is retried.
 
 ## Limits
 

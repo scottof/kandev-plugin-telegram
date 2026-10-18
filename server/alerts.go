@@ -70,26 +70,37 @@ func (b *bot) enqueue(ctx context.Context, qa queuedTaskAlert) error {
 	return b.store.setTaskAlertQueue(ctx, capQueue(append(queue, qa)))
 }
 
-// settleQueued removes delivered alerts. Alerts queued while the send was in
+// settleQueued records the users each alert is now settled for and drops
+// alerts settled for every allowed user. Alerts queued while the send was in
 // flight stay for the next cycle.
-func (b *bot) settleQueued(ctx context.Context, delivered []queuedTaskAlert) error {
+func (b *bot) settleQueued(ctx context.Context, settled map[taskAlertKey][]int64) error {
 	b.queueMu.Lock()
 	defer b.queueMu.Unlock()
 	queue, err := b.store.taskAlertQueue(ctx)
 	if err != nil {
 		return err
 	}
-	done := make(map[queuedTaskAlert]bool, len(delivered))
-	for _, q := range delivered {
-		done[q] = true
-	}
 	kept := queue[:0]
 	for _, q := range queue {
-		if !done[q] {
+		for _, userID := range settled[q.key()] {
+			if !q.settledFor(userID) {
+				q.SettledFor = append(q.SettledFor, userID)
+			}
+		}
+		if !b.settledForAll(q) {
 			kept = append(kept, q)
 		}
 	}
 	return b.store.setTaskAlertQueue(ctx, kept)
+}
+
+func (b *bot) settledForAll(q queuedTaskAlert) bool {
+	for _, userID := range b.cfg.AllowedUserIDs {
+		if !q.settledFor(userID) {
+			return false
+		}
+	}
+	return true
 }
 
 // capQueue keeps the newest maxQueuedAlerts alerts.
@@ -100,12 +111,14 @@ func capQueue(queue []queuedTaskAlert) []queuedTaskAlert {
 	return queue
 }
 
-// flushAlerts collects new pending interactions and queued task alerts and
-// sends them to every allowed user as one message. Interactions are marked
+// flushAlerts sends each allowed user one message with the pending
+// interactions and queued task alerts not yet settled for that user. A user is
+// settled on delivery or on a permanent Telegram rejection; a retryable
+// failure for one user leaves the others untouched. Interactions are marked
 // sent after the send attempt: a crash in between repeats an alert rather
-// than losing it.
-func (b *bot) flushAlerts(ctx context.Context) {
-	alerts, nextSent, err := b.newInteractionAlerts(ctx)
+// than losing it. retry reports a retryable failure for at least one user.
+func (b *bot) flushAlerts(ctx context.Context) (retry bool) {
+	pending, stored, err := b.interactionState(ctx)
 	if err != nil && ctx.Err() == nil {
 		log.Printf("telegram: reconciling pending interactions: %v", err)
 	}
@@ -113,58 +126,90 @@ func (b *bot) flushAlerts(ctx context.Context) {
 	if err != nil && ctx.Err() == nil {
 		log.Printf("telegram: %v", err)
 	}
-	for _, q := range queued {
-		alerts = append(alerts, q.alert)
+
+	titles := map[string]string{}
+	nextSent := sentSet{}
+	settledQueued := map[taskAlertKey][]int64{}
+	anySettled := false
+	var rejected string
+	for _, userID := range b.cfg.AllowedUserIDs {
+		var alerts []alert
+		var newIDs []string
+		for _, in := range pending {
+			if stored.has(userID, in.ID) || b.sentMemo.has(userID, in.ID) || !b.cfg.AlertInteractions {
+				nextSent.add(userID, in.ID)
+				continue
+			}
+			alerts = append(alerts, interactionAlert(in, b.taskTitle(ctx, in.TaskID, titles)))
+			newIDs = append(newIDs, in.ID)
+		}
+		var keys []taskAlertKey
+		for _, q := range queued {
+			if !q.settledFor(userID) {
+				alerts = append(alerts, q.alert)
+				keys = append(keys, q.key())
+			}
+		}
+		if len(alerts) == 0 {
+			continue
+		}
+
+		settled, rejection := b.deliver(ctx, userID, formatAlerts(alerts, b.cfg.KandevURL))
+		if !settled {
+			retry = true
+			continue
+		}
+		anySettled = true
+		if rejection != "" {
+			rejected = rejection
+		}
+		for _, id := range newIDs {
+			nextSent.add(userID, id)
+		}
+		for _, k := range keys {
+			settledQueued[k] = append(settledQueued[k], userID)
+		}
 	}
-	if len(alerts) > 0 && !b.broadcast(ctx, formatAlerts(alerts, b.cfg.KandevURL)) {
-		// Nobody was reached: everything stays for the next cycle, which runs
-		// on the regular interval so an outage is not retried in a tight loop.
-		return
+	if anySettled {
+		b.updateStatus(ctx, func(st *botStatus) { st.AlertError = rejected })
 	}
+
 	if len(queued) > 0 {
-		if err := b.settleQueued(ctx, queued); err != nil && ctx.Err() == nil {
+		if err := b.settleQueued(ctx, settledQueued); err != nil && ctx.Err() == nil {
 			log.Printf("telegram: %v", err)
 		}
 	}
-	if nextSent != nil {
+	if stored != nil {
 		b.sentMemo = nextSent
-		if err := b.store.setSentInteractions(ctx, nextSent); err != nil && ctx.Err() == nil {
-			log.Printf("telegram: %v", err)
+		if !nextSent.equal(stored) {
+			if err := b.store.setSentInteractions(ctx, nextSent); err != nil && ctx.Err() == nil {
+				log.Printf("telegram: %v", err)
+			}
 		}
 	}
+	return retry
 }
 
-// newInteractionAlerts diffs ListPending against the sent set, stored and in
-// memory: the memory copy stops a repeat every cycle while state writes fail.
-// nextSent is the pending ids that are now alerted (resolved ids drop out), or
-// nil when the stored set already matches or the list could not be read.
-func (b *bot) newInteractionAlerts(ctx context.Context) ([]alert, map[string]bool, error) {
-	pending, err := b.pendingInteractions(ctx)
+// interactionState returns the pending interactions and the stored sent set.
+// The in-memory sentMemo is consulted alongside it, so a failing state write
+// does not repeat alerts every cycle. Both are nil when either read fails;
+// interactions are then skipped this cycle and the sent set is left alone.
+func (b *bot) interactionState(ctx context.Context) ([]pluginsdk.Interaction, sentSet, error) {
+	all, err := b.pendingInteractions(ctx)
 	if err != nil {
 		return nil, nil, err
 	}
-	sent, err := b.store.sentInteractions(ctx)
+	stored, err := b.store.sentInteractions(ctx)
 	if err != nil {
 		return nil, nil, err
 	}
-
-	var alerts []alert
-	titles := map[string]string{}
-	nextSent := make(map[string]bool, len(pending))
-	for _, in := range pending {
-		if in.Status != "" && in.Status != pluginsdk.InteractionStatusPending {
-			continue
+	pending := all[:0:0]
+	for _, in := range all {
+		if in.Status == "" || in.Status == pluginsdk.InteractionStatusPending {
+			pending = append(pending, in)
 		}
-		nextSent[in.ID] = true
-		if sent[in.ID] || b.sentMemo[in.ID] || !b.cfg.AlertInteractions {
-			continue
-		}
-		alerts = append(alerts, interactionAlert(in, b.taskTitle(ctx, in.TaskID, titles)))
 	}
-	if sameSet(sent, nextSent) {
-		nextSent = nil
-	}
-	return alerts, nextSent, nil
+	return pending, stored, nil
 }
 
 func listAllPending(ctx context.Context, accessor pluginsdk.InteractionAccessor) ([]pluginsdk.Interaction, error) {
@@ -197,41 +242,32 @@ func (b *bot) taskTitle(ctx context.Context, taskID string, cache map[string]str
 	return title
 }
 
-// broadcast sends msg to every allowed user and reports whether the alert is
-// settled: false only when every send failed with an error worth retrying.
-// Telegram rejections other than 429 (a user who never sent /start, a button
-// URL it refuses) will not heal, so they settle and show in the status card.
-func (b *bot) broadcast(ctx context.Context, msg outMessage) bool {
-	if len(b.cfg.AllowedUserIDs) == 0 {
-		return true
-	}
-	settled := false
-	var rejected string
-	for _, userID := range b.cfg.AllowedUserIDs {
-		degraded, err := b.sendAlert(ctx, userID, msg)
-		switch {
-		case err == nil:
-			settled = true
-			if degraded != nil {
-				rejected = fmt.Sprintf("alert to user %d sent without links: %v", userID, degraded)
-			}
-		case ctx.Err() != nil:
-		case isPermanent(err):
-			settled = true
-			rejected = fmt.Sprintf("alert to user %d: %v", userID, err)
-			if isForbidden(err) {
-				log.Printf("telegram: user %d has not started the bot or blocked it", userID)
-			} else {
-				log.Printf("telegram: %s", rejected)
-			}
-		default:
-			log.Printf("telegram: sending alert: %v", err)
+// deliver sends msg to one user and reports whether it is settled for them:
+// delivered, or rejected for good. Telegram rejections other than 429 (a user
+// who never sent /start, a button URL it refuses) will not heal, so they
+// settle; rejection then describes them for the status card.
+func (b *bot) deliver(ctx context.Context, userID int64, msg outMessage) (settled bool, rejection string) {
+	degraded, err := b.sendAlert(ctx, userID, msg)
+	switch {
+	case err == nil:
+		if degraded != nil {
+			rejection = fmt.Sprintf("alert to user %d sent without links: %v", userID, degraded)
 		}
+		return true, rejection
+	case ctx.Err() != nil:
+		return false, ""
+	case isPermanent(err):
+		rejection = fmt.Sprintf("alert to user %d: %v", userID, err)
+		if isForbidden(err) {
+			log.Printf("telegram: user %d has not started the bot or blocked it", userID)
+		} else {
+			log.Printf("telegram: %s", rejection)
+		}
+		return true, rejection
+	default:
+		log.Printf("telegram: sending alert: %v", err)
+		return false, ""
 	}
-	if settled {
-		b.updateStatus(ctx, func(st *botStatus) { st.AlertError = rejected })
-	}
-	return settled
 }
 
 // sendAlert sends msg to one user. When Telegram rejects the message with

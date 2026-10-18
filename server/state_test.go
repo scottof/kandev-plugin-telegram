@@ -32,10 +32,25 @@ func TestStateStore_SentInteractionsRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, sent)
 
-	require.NoError(t, store.setSentInteractions(ctx, map[string]bool{"b": true, "a": true}))
+	want := sentSet{42: {"b": true, "a": true}, 987654321: {"a": true}}
+	require.NoError(t, store.setSentInteractions(ctx, want))
 	sent, err = store.sentInteractions(ctx)
 	require.NoError(t, err)
-	require.Equal(t, map[string]bool{"a": true, "b": true}, sent)
+	require.Equal(t, want, sent)
+}
+
+func TestStateStore_TaskAlertQueueKeepsSettledUsers(t *testing.T) {
+	ctx := context.Background()
+	store := stateStore{host: newFakeHost()}
+	want := []queuedTaskAlert{{
+		alert:      alert{Kind: alertCompleted, TaskID: "t1", TaskTitle: "Fix login"},
+		Marker:     "COMPLETED@1",
+		SettledFor: []int64{42, 987654321},
+	}}
+	require.NoError(t, store.setTaskAlertQueue(ctx, want))
+	queue, err := store.taskAlertQueue(ctx)
+	require.NoError(t, err)
+	require.Equal(t, want, queue)
 }
 
 func TestStateStore_TaskAlertLogRoundTrip(t *testing.T) {
