@@ -7,10 +7,11 @@
 - Telegram bot over long polling, configured from Settings > Plugins: bot token, allowed user ids, kandev URL,
   triage agent profile, start agent, and alert toggles.
 - Alerts with a task link when an agent waits for a permission or an answer, and when a task is completed, fails to
-  start or (opt-in) moves to review. Bursts are batched into one message, and a restart never repeats an alert.
+  start or (opt-in) moves to review. Bursts are batched into one message. Alerts survive a restart
+  or a Telegram outage, and a restart only repeats one if it lands between sending it and recording it.
 - `/new <text>` files a task through the triage agent, with the replied-to message as context.
 - `/status` lists running tasks and agents waiting on you.
-- Settings page status card with a test message button.
+- Settings page status card with a test message button, settings warnings and the last alert Telegram refused.
 
 ### Removed
 

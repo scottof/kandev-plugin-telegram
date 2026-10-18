@@ -28,9 +28,9 @@ Requires kandev 0.95.0 or newer.
    |---|---|
    | Bot token | The token from BotFather. It is stored in kandev's encrypted vault. |
    | Allowed Telegram user ids | Comma-separated ids from step 2. Messages from anyone else are ignored without a reply. Empty means the bot answers nobody. |
-   | kandev URL | The base URL your phone uses to open kandev, for example `https://my-laptop.tailnet-name.ts.net:38429` over Tailscale. It is only used to build links. |
+   | kandev URL | The base URL your phone uses to open kandev, for example `https://my-laptop.tailnet-name.ts.net:38429` over Tailscale. It is only used to build links, and must not contain a user name, password, query string or fragment. A `localhost` address works for the settings check but not on a phone, and the status card warns about it. |
    | Triage agent profile | The agent profile `/new` uses. Not set means the default from Settings > Utility Agents. |
-   | Start an agent on tasks filed with /new | Off by default. |
+   | Start an agent on tasks filed with /new | Off by default. When on, the text of a message you reply to also reaches the triage prompt, so do not reply to forwarded text you do not trust. |
    | Alert toggles | Waiting agents, completed tasks and failed tasks are on by default. Review alerts are off by default (see below). |
 
    kandev restarts the plugin when you save.
@@ -53,6 +53,10 @@ Requires kandev 0.95.0 or newer.
   - kandev can drop events under load, so task alerts are best-effort. Waiting-agent alerts are not, because they are
     read from the durable list.
 - A burst of alerts is sent as one message with up to ten task buttons.
+- During a Telegram outage, alerts wait in plugin state and go out on the next 15 second cycle, so a restart does not
+  lose them. Up to 50 task alerts wait; older ones are dropped. If Telegram refuses an alert for good (for example a
+  link button it will not accept), the bot sends it once without buttons, and the status card shows the last refused
+  alert.
 
 ## Limits
 
