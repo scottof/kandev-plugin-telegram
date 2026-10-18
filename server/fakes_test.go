@@ -81,6 +81,18 @@ type fakeData struct {
 	listCalls      int
 	listTasksErr   error
 	lastTaskFilter pluginsdk.TaskFilter
+
+	workspaces   []pluginsdk.Workspace
+	workflows    []pluginsdk.Workflow
+	steps        map[string][]pluginsdk.WorkflowStep
+	repositories []pluginsdk.Repository
+	created      []pluginsdk.CreateTaskInput
+	createErr    error
+
+	agentReply   string
+	agentErr     error
+	agentPrompts []string
+	agentOptions []pluginsdk.UtilityAgentOptions
 }
 
 func (h *fakeHost) data() *fakeData { return h.d }
@@ -100,6 +112,74 @@ func (h *fakeHost) setPending(items ...pluginsdk.Interaction) {
 }
 
 func (h *fakeHost) Tasks() pluginsdk.TaskReader { return &fakeTasks{d: h.data()} }
+
+func (h *fakeHost) Workspaces() pluginsdk.WorkspaceReader { return &fakeWorkspaces{d: h.data()} }
+
+func (h *fakeHost) Workflows() pluginsdk.WorkflowReader { return &fakeWorkflows{d: h.data()} }
+
+func (h *fakeHost) Repositories() pluginsdk.RepositoryReader {
+	return &fakeRepositories{d: h.data()}
+}
+
+func (h *fakeHost) InvokeUtilityAgent(_ context.Context, prompt string, options ...pluginsdk.UtilityAgentOptions) (string, error) {
+	d := h.data()
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.agentPrompts = append(d.agentPrompts, prompt)
+	d.agentOptions = append(d.agentOptions, options...)
+	return d.agentReply, d.agentErr
+}
+
+type fakeWorkspaces struct {
+	pluginsdk.WorkspaceReader
+	d *fakeData
+}
+
+func (f *fakeWorkspaces) List(context.Context, pluginsdk.Page) ([]pluginsdk.Workspace, *pluginsdk.PageInfo, error) {
+	f.d.mu.Lock()
+	defer f.d.mu.Unlock()
+	return append([]pluginsdk.Workspace(nil), f.d.workspaces...), &pluginsdk.PageInfo{}, nil
+}
+
+type fakeWorkflows struct {
+	pluginsdk.WorkflowReader
+	d *fakeData
+}
+
+func (f *fakeWorkflows) List(_ context.Context, workspaceID string, _ pluginsdk.Page) ([]pluginsdk.Workflow, *pluginsdk.PageInfo, error) {
+	f.d.mu.Lock()
+	defer f.d.mu.Unlock()
+	var out []pluginsdk.Workflow
+	for _, wf := range f.d.workflows {
+		if wf.WorkspaceID == workspaceID {
+			out = append(out, wf)
+		}
+	}
+	return out, &pluginsdk.PageInfo{}, nil
+}
+
+func (f *fakeWorkflows) ListSteps(_ context.Context, workflowID string) ([]pluginsdk.WorkflowStep, error) {
+	f.d.mu.Lock()
+	defer f.d.mu.Unlock()
+	return append([]pluginsdk.WorkflowStep(nil), f.d.steps[workflowID]...), nil
+}
+
+type fakeRepositories struct {
+	pluginsdk.RepositoryReader
+	d *fakeData
+}
+
+func (f *fakeRepositories) List(_ context.Context, workspaceID string, _ pluginsdk.Page) ([]pluginsdk.Repository, *pluginsdk.PageInfo, error) {
+	f.d.mu.Lock()
+	defer f.d.mu.Unlock()
+	var out []pluginsdk.Repository
+	for _, r := range f.d.repositories {
+		if r.WorkspaceID == workspaceID {
+			out = append(out, r)
+		}
+	}
+	return out, &pluginsdk.PageInfo{}, nil
+}
 
 func (h *fakeHost) Interactions() pluginsdk.InteractionAccessor {
 	return &fakeInteractions{d: h.data()}
@@ -141,6 +221,18 @@ func (f *fakeTasks) List(_ context.Context, filter pluginsdk.TaskFilter, page pl
 		out = out[:page.Limit]
 	}
 	return out, &pluginsdk.PageInfo{}, nil
+}
+
+func (f *fakeTasks) Create(_ context.Context, in pluginsdk.CreateTaskInput) (*pluginsdk.Task, error) {
+	f.d.mu.Lock()
+	defer f.d.mu.Unlock()
+	if f.d.createErr != nil {
+		return nil, f.d.createErr
+	}
+	f.d.created = append(f.d.created, in)
+	task := pluginsdk.Task{ID: "task-new", Identifier: "KAN-7", Title: in.Title, WorkspaceID: in.WorkspaceID, WorkflowID: in.WorkflowID}
+	f.d.tasks = append(f.d.tasks, task)
+	return &task, nil
 }
 
 type fakeInteractions struct {

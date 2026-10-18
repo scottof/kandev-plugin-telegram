@@ -8,9 +8,10 @@ description: "Telegram bot for kandev: alerts with task links when an agent wait
 author: "scottof"
 categories: ["connector"]
 
-# Oldest release with every host API this plugin calls. Raise it when a newer
-# API is used. The check is skipped on hosts built from a git checkout.
-min_kandev_version: "0.92.0"
+# Oldest release with every host API this plugin calls: ListPending (0.92.0)
+# and UtilityAgentOptions.ProfileID (0.95.0). The check is skipped on hosts
+# built from a git checkout.
+min_kandev_version: "0.95.0"
 
 runtime:
   type: binary
@@ -26,7 +27,9 @@ capabilities:
   # session.pending_action_changed only triggers an early ListPending check.
   events: ["task.state_changed", "session.pending_action_changed"]
   state: true
-  api_read: ["tasks", "interactions"]
+  agent_invoke: true
+  api_read: ["workspaces", "workflows", "repositories", "tasks", "interactions"]
+  api_write: ["tasks"]
 
 ui:
   bundle: "/ui/bundle.js"

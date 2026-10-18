@@ -99,6 +99,16 @@ func (b *bot) handleUpdate(ctx context.Context, u tgUpdate) {
 	switch cmd.Name {
 	case "status":
 		b.reply(ctx, msg, b.statusMessage(ctx))
+	case "new":
+		if cmd.Args == "" {
+			b.reply(ctx, msg, outMessage{Text: newUsage})
+			return
+		}
+		req := triageRequest{Sender: senderName(msg.From), Text: cmd.Args}
+		if msg.ReplyToMessage != nil {
+			req.ReplyContext = msg.ReplyToMessage.Text
+		}
+		b.reply(ctx, msg, b.fileTask(ctx, req))
 	default:
 		b.reply(ctx, msg, outMessage{Text: helpText})
 	}

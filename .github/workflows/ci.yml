@@ -80,7 +80,7 @@ jobs:
           make audit-recipes
 
   base-floor:
-    name: Backend on minimum Kandev v0.92.0
+    name: Backend on minimum Kandev v0.95.0
     runs-on: ubuntu-latest
     steps:
       - name: Check out plugin
@@ -93,7 +93,7 @@ jobs:
         with:
           repository: kdlbs/kandev
           path: kandev
-          ref: v0.92.0
+          ref: v0.95.0
           sparse-checkout: apps/backend
 
       - name: Set up Go
