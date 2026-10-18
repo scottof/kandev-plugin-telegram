@@ -21,5 +21,51 @@ runtime:
     darwin-arm64: "server/plugin-darwin-arm64"
     windows-amd64: "server/plugin-windows-amd64.exe"
 
+capabilities:
+  state: true
+
 ui:
   bundle: "/ui/bundle.js"
+
+# kandev restarts the plugin process when these are saved.
+config_schema:
+  type: object
+  properties:
+    bot_token:
+      type: string
+      title: "Bot token"
+      description: "Token from @BotFather. Stored in kandev's encrypted vault."
+      secret: true
+    allowed_user_ids:
+      type: string
+      title: "Allowed Telegram user ids"
+      description: "Comma-separated numeric user ids. Messages from anyone else are ignored. Empty means the bot answers nobody."
+    kandev_url:
+      type: string
+      title: "kandev URL"
+      description: "Base URL your phone uses to open kandev, for example a Tailscale address. Used only to build links."
+    triage_agent_profile:
+      type: string
+      format: agent-profile
+      title: "Triage agent profile"
+      description: "Agent profile /new uses to place a task. Not set uses the default from Settings > Utility Agents."
+    start_agent:
+      type: boolean
+      title: "Start an agent on tasks filed with /new"
+      default: false
+    alert_interactions:
+      type: boolean
+      title: "Alert when an agent waits for permission or an answer"
+      default: true
+    alert_completed:
+      type: boolean
+      title: "Alert when a task is completed"
+      default: true
+    alert_failed:
+      type: boolean
+      title: "Alert when a task fails to start"
+      default: true
+    alert_review:
+      type: boolean
+      title: "Alert when a task moves to review (after every agent turn)"
+      default: false
