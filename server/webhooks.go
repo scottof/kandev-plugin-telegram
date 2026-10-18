@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -78,6 +80,12 @@ func (p *telegramPlugin) testWebhook(ctx context.Context, host pluginsdk.Host) *
 			reason = st.LastError
 		}
 		return jsonResponse(http.StatusConflict, map[string]any{"ok": false, "error": "The bot is not running: " + reason})
+	}
+
+	// Waiting out retry_after here would outlast the webhook request.
+	if wait := b.tg.HoldRemaining(); wait > 0 {
+		seconds := int64(math.Ceil(wait.Seconds()))
+		return jsonResponse(http.StatusOK, map[string]any{"ok": false, "error": fmt.Sprintf("Telegram asked to wait %d s before the next message. Try again then.", seconds)})
 	}
 
 	me, err := b.tg.GetMe(ctx)

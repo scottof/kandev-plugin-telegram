@@ -221,6 +221,18 @@ func TestHTTPTelegram_RetryAfterIsCappedAtFiveMinutes(t *testing.T) {
 	require.Equal(t, []time.Duration{5 * time.Minute}, clk.sleeps())
 }
 
+func TestHTTPTelegram_HoldRemaining(t *testing.T) {
+	_, srv := newStubTelegram(t)
+	clk := newFakeClock()
+	client := newTestClient(srv, clk)
+	require.Zero(t, client.HoldRemaining())
+	client.hold(30 * time.Second)
+	clk.advance(10 * time.Second)
+	require.Equal(t, 20*time.Second, client.HoldRemaining())
+	clk.advance(time.Minute)
+	require.Zero(t, client.HoldRemaining())
+}
+
 func TestHTTPTelegram_HoldExtendedDuringSleepDelaysTheSend(t *testing.T) {
 	stub, srv := newStubTelegram(t)
 	clk := newFakeClock()

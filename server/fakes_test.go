@@ -341,6 +341,7 @@ type fakeTelegram struct {
 	sendErrWithButtons error
 	attempts           int
 	attemptsTo         map[int64]int
+	hold               time.Duration
 	onSend             func()
 	onDrained          func()
 }
@@ -461,6 +462,18 @@ func (f *fakeTelegram) offsets() []int64 {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]int64(nil), f.polled...)
+}
+
+func (f *fakeTelegram) setHold(d time.Duration) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.hold = d
+}
+
+func (f *fakeTelegram) HoldRemaining() time.Duration {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.hold
 }
 
 var _ telegramClient = (*fakeTelegram)(nil)

@@ -76,6 +76,8 @@ type telegramClient interface {
 	GetUpdates(ctx context.Context, offset int64, timeoutSeconds int) ([]tgUpdate, error)
 	// SendMessage sends plain text; replyTo of 0 means not a reply.
 	SendMessage(ctx context.Context, chatID int64, msg outMessage, replyTo int64) error
+	// HoldRemaining is how long calls still wait out the last retry_after.
+	HoldRemaining() time.Duration
 }
 
 // telegramAPIError is a Bot API error rebuilt from the response body only, so
@@ -209,15 +211,19 @@ func (c *httpTelegram) hold(d time.Duration) {
 	}
 }
 
+func (c *httpTelegram) HoldRemaining() time.Duration {
+	c.holdMu.Lock()
+	until := c.holdUntil
+	c.holdMu.Unlock()
+	return max(until.Sub(c.clock.Now()), 0)
+}
+
 // waitForHold re-reads the hold after every sleep: another call may have
 // received a longer retry_after in the meantime.
 func (c *httpTelegram) waitForHold(ctx context.Context) error {
 	for {
-		c.holdMu.Lock()
-		until := c.holdUntil
-		c.holdMu.Unlock()
-		wait := until.Sub(c.clock.Now())
-		if wait <= 0 {
+		wait := c.HoldRemaining()
+		if wait == 0 {
 			return nil
 		}
 		if err := c.clock.Sleep(ctx, wait); err != nil {

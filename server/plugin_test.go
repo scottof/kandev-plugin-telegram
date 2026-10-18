@@ -214,6 +214,24 @@ func TestWebhookTest_ReportsUnreachableUsers(t *testing.T) {
 	require.Equal(t, "Could not message 42, 43. Each allowed user must send /start to @kandev_bot first.", body["error"])
 }
 
+func TestWebhookTest_FailsFastDuringRetryAfterHold(t *testing.T) {
+	b, host, tg := newAlertBot(t, 42)
+	p := &telegramPlugin{bot: b}
+	p.UnimplementedPlugin.SetHost(host)
+
+	tg.setHold(90*time.Second + 200*time.Millisecond)
+	status, body := webhook(t, p, "test", "POST")
+	require.Equal(t, int32(200), status)
+	require.Equal(t, false, body["ok"])
+	require.Equal(t, "Telegram asked to wait 91 s before the next message. Try again then.", body["error"])
+	require.Zero(t, tg.sendAttempts())
+
+	tg.setHold(0)
+	_, body = webhook(t, p, "test", "POST")
+	require.Equal(t, true, body["ok"])
+	require.Len(t, tg.sentMessages(), 1)
+}
+
 func TestWebhookTest_NoAllowedUsers(t *testing.T) {
 	b, host, _ := newAlertBot(t)
 	b.cfg.AllowedUserIDs = nil
