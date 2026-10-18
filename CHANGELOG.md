@@ -10,10 +10,11 @@
   start or (opt-in) moves to review. Bursts are batched into one message. Alerts survive a restart
   or a Telegram outage, and a restart only repeats one if it lands between sending it and recording it. Delivery is
   tracked per allowed user, retries during an outage wait for the 15 second cycle, and Telegram's `retry_after` is
-  honoured.
+  honoured for up to 5 minutes.
 - `/new <text>` files a task through the triage agent, with the replied-to message as context.
 - `/status` lists running tasks and agents waiting on you.
-- Settings page status card with a test message button, settings warnings and the last alert Telegram refused.
+- Settings page status card with a test message button, settings warnings and the last alert Telegram refused. The
+  test button fails at once while Telegram asks the bot to wait, and a bad allowed user id is named by its position.
 
 ### Removed
 
