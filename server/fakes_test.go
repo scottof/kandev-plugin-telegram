@@ -96,6 +96,7 @@ type fakeData struct {
 	listCalls      int
 	listTasksErr   error
 	lastTaskFilter pluginsdk.TaskFilter
+	taskListCalls  int
 
 	workspaces   []pluginsdk.Workspace
 	workflows    []pluginsdk.Workflow
@@ -256,10 +257,19 @@ func (f *fakeTasks) List(_ context.Context, filter pluginsdk.TaskFilter, page pl
 		}
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].UpdatedAt > out[j].UpdatedAt })
+	f.d.taskListCalls++
+	start, _ := strconv.Atoi(page.Cursor)
+	if start > len(out) {
+		start = len(out)
+	}
+	out = out[start:]
+	info := &pluginsdk.PageInfo{}
 	if page.Limit > 0 && len(out) > int(page.Limit) {
 		out = out[:page.Limit]
+		info.HasMore = true
+		info.NextCursor = strconv.Itoa(start + int(page.Limit))
 	}
-	return out, &pluginsdk.PageInfo{}, nil
+	return out, info, nil
 }
 
 func (f *fakeTasks) Create(_ context.Context, in pluginsdk.CreateTaskInput) (*pluginsdk.Task, error) {
@@ -383,6 +393,16 @@ type fakeTelegram struct {
 	onDrained          func()
 	reactions          []fakeReaction
 	reactionErr        error
+	// sendErrWithLinks fails only messages that carry URL buttons, the way
+	// Telegram refuses links to localhost but accepts action buttons.
+	sendErrWithLinks error
+	answers          []fakeAnswer
+	commands         []tgBotCommand
+	commandsErr      error
+}
+
+type fakeAnswer struct {
+	CallbackID, Text string
 }
 
 type fakeReaction struct {
@@ -456,6 +476,9 @@ func (f *fakeTelegram) SendMessage(_ context.Context, chatID int64, msg outMessa
 	if err == nil && len(msg.Buttons) > 0 {
 		err = f.sendErrWithButtons
 	}
+	if err == nil && msg.hasLinks() {
+		err = f.sendErrWithLinks
+	}
 	if err == nil {
 		f.sent = append(f.sent, sentMessage{ChatID: chatID, Msg: msg, ReplyTo: replyTo})
 	}
@@ -519,6 +542,26 @@ func (f *fakeTelegram) SetReaction(_ context.Context, chatID, messageID int64, e
 	defer f.mu.Unlock()
 	f.reactions = append(f.reactions, fakeReaction{ChatID: chatID, MessageID: messageID, Emoji: emoji})
 	return f.reactionErr
+}
+
+func (f *fakeTelegram) AnswerCallback(_ context.Context, callbackID, text string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.answers = append(f.answers, fakeAnswer{CallbackID: callbackID, Text: text})
+	return nil
+}
+
+func (f *fakeTelegram) SetCommands(_ context.Context, commands []tgBotCommand) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.commands = append([]tgBotCommand(nil), commands...)
+	return f.commandsErr
+}
+
+func (f *fakeTelegram) sentAnswers() []fakeAnswer {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]fakeAnswer(nil), f.answers...)
 }
 
 func (f *fakeTelegram) sentReactions() []fakeReaction {

@@ -22,6 +22,10 @@ type config struct {
 	AlertFailed        bool
 	AlertReview        bool
 	AlertColumnMoves   bool
+	// QuietHours is nil when quiet hours are off.
+	QuietHours *quietHours
+	// AlertWorkflows are lowercased workflow names; empty means all.
+	AlertWorkflows []string
 }
 
 // loadConfig parses the raw GetConfig map. Defaults mirror the manifest
@@ -49,6 +53,13 @@ func loadConfig(raw map[string]any) (config, error) {
 		return config{}, err
 	}
 	cfg.KandevURL = base
+
+	quiet, err := parseQuietHours(configString(raw, "quiet_hours"), configString(raw, "timezone"))
+	if err != nil {
+		return config{}, err
+	}
+	cfg.QuietHours = quiet
+	cfg.AlertWorkflows = parseWorkflowFilter(configString(raw, "alert_workflows"))
 	return cfg, nil
 }
 

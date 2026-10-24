@@ -118,6 +118,10 @@ func (b *bot) pollOnce(ctx context.Context, offset int64) (int64, error) {
 // handleUpdate drops anything that is not a private message from an allowed
 // user, without replying, then dispatches commands.
 func (b *bot) handleUpdate(ctx context.Context, u tgUpdate) {
+	if u.CallbackQuery != nil {
+		b.handleCallback(ctx, u.CallbackQuery)
+		return
+	}
 	msg := u.Message
 	if msg == nil || msg.From == nil || msg.Chat.Type != "private" || !b.cfg.isAllowed(msg.From.ID) {
 		return
@@ -148,6 +152,12 @@ func (b *bot) handleUpdate(ctx context.Context, u tgUpdate) {
 		b.acknowledge(ctx, msg)
 		b.reply(ctx, msg, b.fileTask(ctx, req))
 		b.endCommand(ctx)
+	case "task":
+		b.reply(ctx, msg, b.taskCommand(ctx, cmd.Args))
+	case "mute":
+		b.reply(ctx, msg, b.muteCommand(ctx, cmd.Args))
+	case "unmute":
+		b.reply(ctx, msg, b.unmuteCommand(ctx, cmd.Args))
 	default:
 		b.reply(ctx, msg, outMessage{Text: helpText})
 	}

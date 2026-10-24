@@ -2,9 +2,9 @@
 # Makefile BIN and the id passed to window.registerKandevPlugin in ui/bundle.js.
 id: "kandev-plugin-telegram"
 api_version: 1
-version: "0.1.4"
+version: "0.1.5"
 display_name: "Telegram"
-description: "Telegram bot for kandev: alerts with task links when an agent waits on a human or a task ends, /new to file a task through a triage agent, /status, and a notify_user tool agents can call."
+description: "Telegram bot for kandev: alerts with task links when an agent waits on a human or a task ends, Mute and Done buttons, /new to file a task through a triage agent, /status, /task, quiet hours, and a notify_user tool agents can call."
 author: "scottof"
 categories: ["connector"]
 
@@ -138,3 +138,16 @@ config_schema:
       type: boolean
       title: "Alert when a task changes column (board moves and the moves kandev makes after an agent turn)"
       default: false
+    quiet_hours:
+      type: string
+      title: "Quiet hours"
+      description: "Hold alerts during this window and send them as one batch when it ends, for example 22:00-07:00. Empty means off."
+    timezone:
+      type: string
+      title: "Time zone for quiet hours"
+      description: "IANA time zone name, for example Europe/Amsterdam."
+      default: "Europe/Amsterdam"
+    alert_workflows:
+      type: string
+      title: "Alert only for these workflows"
+      description: "Comma-separated workflow names, for example Solo Dev, Shape Up. Empty means every workflow. Applies to alerts, not to /status."

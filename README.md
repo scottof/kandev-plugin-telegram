@@ -4,12 +4,16 @@ A [kandev](https://github.com/kdlbs/kandev) plugin that connects a Telegram bot 
 
 - **Alerts with task links.** The bot messages you when an agent waits for a permission or an answer, and when a task
   is completed or fails to start. Each alert has a button that opens the task in kandev. You answer in kandev, not in
-  Telegram.
+  Telegram. An alert about one task also has **Mute** and **Done** buttons.
 - **`/new <text>`** files a task. A triage agent picks the workspace, workflow and column, and the bot replies with a
   link and the column it used. It reacts with 👀 to your message while the agent works. Reply to an earlier message
   with `/new` to pass that message along as context. A new task never lands in a column for finished work: a pick such
   as Done goes to the workflow's start column, and a task kandev still reports as completed is moved back there.
 - **`/status`** lists running tasks and agents waiting on you, with a link to the needs-you inbox.
+- **`/task <words>`** shows the task whose title matches, with its workflow, column and state.
+- **`/mute <words>`** and **`/unmute`** stop and restart alerts for one task.
+- **Quiet hours and a workflow filter**, both off by default, keep alerts out of your night and out of workflows you
+  do not follow.
 - **`notify_user` for agents.** An agent working on a task can message you on Telegram, for example when a deploy
   finishes or it is blocked. See [Agent notifications](#agent-notifications).
 
@@ -36,6 +40,9 @@ Requires kandev 0.95.0 or newer.
    | Triage agent profile | The agent profile `/new` uses. Not set means the default from Settings > Utility Agents; when that is not set either and kandev has a single workspace, the workspace's default agent is used. The profile must be enabled, global and not a CLI passthrough. |
    | Start an agent on tasks filed with /new | Off by default. When on, the text of a message you reply to also reaches the triage prompt, so do not reply to forwarded text you do not trust. |
    | Alert toggles | Waiting agents, completed tasks and failed tasks are on by default. Review alerts and column alerts are off by default (see below). |
+   | Quiet hours | A window such as `22:00-07:00`. Empty, the default, means off. |
+   | Time zone for quiet hours | An IANA name, `Europe/Amsterdam` by default. |
+   | Alert only for these workflows | Comma-separated workflow names, for example `Solo Dev, Shape Up`. Empty means every workflow. |
 
    kandev restarts the plugin when you save.
 6. **Approve capabilities if asked.** If the plugin page shows a capability approval section, approve the requested
@@ -74,6 +81,36 @@ Requires kandev 0.95.0 or newer.
   hold alerts back from the others, and a user who already got an alert is not sent it again while another user's
   delivery is retried.
 
+## Commands and buttons
+
+The bot registers its commands with Telegram when it starts, so they show in the chat's command menu.
+
+| Command | What it does |
+| --- | --- |
+| `/new <text>` | Files a task through the triage agent. |
+| `/status` | Running tasks and agents waiting on you. It also says how many tasks are muted and whether quiet hours are on. |
+| `/task <words>` | The task whose title contains every word, with **Open task**, **Mute** and **Done**. Several matches give a list of up to ten. |
+| `/mute <words>` | Mutes the matching task. |
+| `/unmute` | Lists muted tasks. `/unmute <words>` unmutes the matching one, `/unmute all` unmutes every one. |
+| `/help` | The command list. |
+
+The words are matched against task titles, ignoring case, across the first 500 tasks kandev returns. Quick chat tasks are skipped.
+
+- **Mute** stops every alert for that task until you unmute it. A permission prompt that came up while the task was
+  muted is not sent after you unmute it. Mute does not affect `notify_user` messages, which an agent sends on purpose.
+- **Done** moves the task to its workflow's column for finished work (one named like Done, Shipped or Closed), or to
+  its last column when no column is named like that. Completed tasks get Mute only.
+- Batched alerts have no Mute or Done buttons, because they cover several tasks. Use `/task` for one of them.
+
+## Quiet hours and the workflow filter
+
+- **Quiet hours.** During the window, nothing is sent. Prompts and task alerts wait in plugin state and go out as one
+  batch on the first cycle after the window ends. A window can cross midnight, such as `22:00-07:00`. `notify_user`
+  and command replies are not held.
+- **Workflow filter.** Only tasks in the named workflows alert. Names are matched ignoring case. A task whose workflow
+  the plugin cannot read still alerts, so a missing permission never hides an alert. `/status` and `/task` still show
+  every workflow.
+
 ## Agent notifications
 
 The plugin gives agents in kanban and office tasks a `notify_user` tool. Kandev shows it to the agent under a
@@ -108,6 +145,10 @@ same message twice by retrying. While Telegram asks the bot to wait, the call fa
 | "Telegram asked the bot to wait N s" | Telegram is rate limiting the bot. Wait and try again. |
 | The status card shows a 409 error | Another program polls the same bot token. Stop it, or create a separate bot. |
 | Moving a card does not alert | Alerts follow the task's state. Turn on *Alert when a task changes column*. |
+| A task stopped alerting | It may be muted, or its workflow may be outside *Alert only for these workflows*. `/status` says how many tasks are muted; `/unmute` lists them. |
+| No alerts at night, then a batch in the morning | Quiet hours are on. Clear the *Quiet hours* field to turn them off. |
+| "quiet_hours: use HH:MM-HH:MM" on the status card | Write the window as two 24-hour times, for example `22:00-07:00`. |
+| The commands do not show in the chat's menu | Telegram caches the menu. Close and reopen the chat, or restart the Telegram app. |
 
 ## Limits
 
@@ -140,7 +181,7 @@ make verify-package
 Install the resulting `kandev-plugin-telegram-<version>.tar.gz` from Settings > Plugins, or:
 
 ```sh
-curl -F package=@kandev-plugin-telegram-0.1.4.tar.gz "$KANDEV_URL/api/plugins/install"
+curl -F package=@kandev-plugin-telegram-0.1.5.tar.gz "$KANDEV_URL/api/plugins/install"
 ```
 
 ## Development
@@ -170,6 +211,8 @@ server/              Go plugin binary
   telegram.go        Bot API client (the token never reaches logs or errors)
   notify.go          notify_user agent tool
   moves.go           column alerts and the last seen column per task
+  actions.go         Mute and Done buttons, /task, /mute, /unmute, the command menu
+  filter.go          quiet hours and the workflow filter
   inflight.go        notice for a command a restart cut short
 ui/bundle.js         settings status card (no build step)
 tests/               UI tests

@@ -40,6 +40,11 @@ type bot struct {
 	notifyMu sync.Mutex
 	// stepsMu serialises read-modify-write of the last-seen column log.
 	stepsMu sync.Mutex
+	// mutedMu serialises read-modify-write of the muted task list.
+	mutedMu sync.Mutex
+	// workflowNames caches workflow names for the alert filter; only the
+	// alert loop touches it.
+	workflowNames map[string]string
 }
 
 func newBot(host pluginsdk.Host, tg telegramClient, cfg config, clk clock, botUsername string) *bot {
@@ -60,6 +65,7 @@ func newBot(host pluginsdk.Host, tg telegramClient, cfg config, clk clock, botUs
 // run blocks until ctx ends and both loops have stopped.
 func (b *bot) run(ctx context.Context) {
 	b.writeStatus(ctx)
+	b.registerCommands(ctx)
 	b.reportInterrupted(ctx)
 	var wg sync.WaitGroup
 	wg.Add(2)

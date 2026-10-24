@@ -227,6 +227,7 @@ func (s stateStore) taskAlertQueue(ctx context.Context) ([]queuedTaskAlert, erro
 		q.TaskID, _ = item["task_id"].(string)
 		q.TaskTitle, _ = item["title"].(string)
 		q.Detail, _ = item["detail"].(string)
+		q.WorkflowID, _ = item["workflow_id"].(string)
 		q.Marker, _ = item["marker"].(string)
 		settled, _ := item["settled_for"].([]any)
 		for _, raw := range settled {
@@ -250,6 +251,7 @@ func (s stateStore) setTaskAlertQueue(ctx context.Context, queue []queuedTaskAle
 		}
 		items = append(items, map[string]any{
 			"kind": string(q.Kind), "task_id": q.TaskID, "title": q.TaskTitle, "detail": q.Detail, "marker": q.Marker,
+			"workflow_id": q.WorkflowID,
 			"settled_for": settled,
 		})
 	}

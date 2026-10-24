@@ -470,7 +470,7 @@ func TestFlushAlerts_RejectedButtonFallsBackToPlainMessage(t *testing.T) {
 	require.Len(t, msgs, 1)
 	require.Equal(t, "Needs permission: Fix login\nRun npm test (execute)", msgs[0].Msg.Text)
 	require.Empty(t, msgs[0].Msg.Buttons)
-	require.Equal(t, 2, tg.sendAttempts(), "the plain message is tried exactly once")
+	require.Equal(t, 3, tg.sendAttempts(), "with links, then actions only, then plain text, each once")
 
 	sent, err := b.store.sentInteractions(ctx)
 	require.NoError(t, err)
@@ -480,6 +480,19 @@ func TestFlushAlerts_RejectedButtonFallsBackToPlainMessage(t *testing.T) {
 	require.Contains(t, status.AlertError, "button URL is invalid")
 }
 
+func TestFlushAlerts_RefusedLinkKeepsActionButtons(t *testing.T) {
+	b, host, tg := newAlertBot(t)
+	tg.sendErrWithLinks = badRequest("Bad Request: inline keyboard button URL 'http://localhost:38429/t/task-1' is invalid")
+	host.setPending(permission("i1", "task-1", "Run npm test"))
+
+	b.flushAlerts(context.Background())
+	msgs := tg.sentMessages()
+	require.Len(t, msgs, 1)
+	require.Equal(t, []linkButton{{Text: "Mute", Data: "m:task-1"}, {Text: "Done", Data: "d:task-1"}}, msgs[0].Msg.Buttons,
+		"a localhost kandev URL loses only its link")
+	require.Equal(t, 2, tg.sendAttempts())
+}
+
 func TestFlushAlerts_RejectedFallbackSettles(t *testing.T) {
 	ctx := context.Background()
 	b, host, tg := newAlertBot(t)
@@ -487,7 +500,7 @@ func TestFlushAlerts_RejectedFallbackSettles(t *testing.T) {
 	host.setPending(permission("i1", "task-1", "x"))
 
 	b.flushAlerts(ctx)
-	require.Equal(t, 2, tg.sendAttempts(), "one try with the button, one without")
+	require.Equal(t, 3, tg.sendAttempts(), "with buttons, with action buttons only, then without any")
 	sent, err := b.store.sentInteractions(ctx)
 	require.NoError(t, err)
 	require.Equal(t, sentSet{42: {"i1": true}}, sent)

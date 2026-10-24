@@ -37,5 +37,8 @@ func parseCommand(text, botUsername string) (command, bool) {
 
 const helpText = "Commands:\n" +
 	"/new <text>: file a task in kandev through the triage agent. Reply to a message to add it as context.\n" +
-	"/status: list running tasks and agents waiting on you.\n\n" +
-	"Alerts for agents waiting on you and finished tasks arrive here on their own."
+	"/status: list running tasks and agents waiting on you.\n" +
+	"/task <words>: find a task by title.\n" +
+	"/mute <words>: stop alerts for a task. /unmute lists muted tasks.\n\n" +
+	"Alerts for agents waiting on you and finished tasks arrive here on their own. " +
+	"An alert about one task has Mute and Done buttons."

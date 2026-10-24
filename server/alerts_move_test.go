@@ -55,7 +55,7 @@ func TestColumnAlert_BoardMoveNamesBothColumns(t *testing.T) {
 	b, _ := newMoveAlertBot(t)
 	got, ok := columnEvent(t, b, eventTaskMoved, moved("task-1", "step-backlog", "step-review", "tr-1"))
 	require.True(t, ok)
-	require.Equal(t, alert{Kind: alertMoved, TaskID: "task-1", TaskTitle: "Fix login", Detail: "Backlog to Review"}, got)
+	require.Equal(t, alert{Kind: alertMoved, TaskID: "task-1", TaskTitle: "Fix login", Detail: "Backlog to Review", WorkflowID: "wf-1"}, got)
 	require.Equal(t, "Moved: Fix login\nBacklog to Review", formatAlerts([]alert{got}, testBase).Text)
 }
 

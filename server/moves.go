@@ -130,7 +130,7 @@ func (b *bot) columnAlert(ctx context.Context, c stepChange, previous string) (a
 	}
 	names := b.stepNames(ctx, c.WorkflowID, c.FromWorkflowID)
 	detail := columnName(names, previous) + " to " + columnName(names, c.StepID)
-	return alert{Kind: alertMoved, TaskID: c.TaskID, TaskTitle: title, Detail: detail}, true, nil
+	return alert{Kind: alertMoved, TaskID: c.TaskID, TaskTitle: title, Detail: detail, WorkflowID: c.WorkflowID}, true, nil
 }
 
 // columnMarker dedupes redelivery of one move. kandev may send no transition

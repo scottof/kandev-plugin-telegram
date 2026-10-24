@@ -51,7 +51,27 @@ func (b *bot) statusMessage(ctx context.Context) outMessage {
 		waiting++
 	}
 
-	return formatStatus(entries, waiting, running, b.cfg.KandevURL, notes...)
+	msg := formatStatus(entries, waiting, running, b.cfg.KandevURL, notes...)
+	if extra := b.statusExtras(ctx); len(extra) > 0 {
+		msg.Text = capMessage(msg.Text + "\n" + strings.Join(extra, "\n"))
+	}
+	return msg
+}
+
+// statusExtras notes what keeps alerts back: muted tasks and quiet hours.
+func (b *bot) statusExtras(ctx context.Context) []string {
+	var extra []string
+	if muted, err := b.store.mutedTasks(ctx); err == nil && len(muted) > 0 {
+		noun := "tasks are"
+		if len(muted) == 1 {
+			noun = "task is"
+		}
+		extra = append(extra, fmt.Sprintf("%d %s muted. /unmute lists them.", len(muted), noun))
+	}
+	if q := b.cfg.QuietHours; q.active(b.clock.Now()) {
+		extra = append(extra, fmt.Sprintf("Quiet hours until %02d:%02d: alerts are held until then.", q.end/60, q.end%60))
+	}
+	return extra
 }
 
 func (b *bot) pendingInteractions(ctx context.Context) ([]pluginsdk.Interaction, error) {

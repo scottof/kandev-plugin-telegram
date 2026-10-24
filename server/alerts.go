@@ -163,7 +163,13 @@ func capQueue(queue []queuedTaskAlert) []queuedTaskAlert {
 // than losing it. A retryable failure for any user sets retryAt one reconcile
 // interval ahead.
 func (b *bot) flushAlerts(ctx context.Context) {
+	// During quiet hours nothing is sent: queued task alerts stay queued and
+	// prompts still pending afterwards go out in the first flush after it.
+	if b.cfg.QuietHours.active(b.clock.Now()) {
+		return
+	}
 	retry := false
+	filter := b.newAlertFilter(ctx)
 	pending, stored, err := b.interactionState(ctx)
 	if err != nil && ctx.Err() == nil {
 		log.Printf("telegram: reconciling pending interactions: %v", err)
@@ -181,7 +187,10 @@ func (b *bot) flushAlerts(ctx context.Context) {
 		var alerts []alert
 		var newIDs []string
 		for _, in := range pending {
-			if stored.has(userID, in.ID) || b.sentMemo.has(userID, in.ID) || !b.cfg.AlertInteractions {
+			// A muted or filtered-out prompt counts as sent, so unmuting
+			// does not burst old prompts.
+			if stored.has(userID, in.ID) || b.sentMemo.has(userID, in.ID) || !b.cfg.AlertInteractions ||
+				filter.dropped(ctx, in.TaskID, "") {
 				nextSent.add(userID, in.ID)
 				continue
 			}
@@ -190,10 +199,15 @@ func (b *bot) flushAlerts(ctx context.Context) {
 		}
 		var keys []taskAlertKey
 		for _, q := range queued {
-			if !b.isSettled(q, userID) {
-				alerts = append(alerts, q.alert)
-				keys = append(keys, q.key())
+			if b.isSettled(q, userID) {
+				continue
 			}
+			if filter.dropped(ctx, q.TaskID, q.WorkflowID) {
+				b.markSettled(q.key(), userID)
+				continue
+			}
+			alerts = append(alerts, q.alert)
+			keys = append(keys, q.key())
 		}
 		if len(alerts) == 0 {
 			continue
@@ -324,13 +338,24 @@ func (b *bot) sendAlert(ctx context.Context, userID int64, msg outMessage) (degr
 }
 
 // sendWithFallback sends msg to chatID. When Telegram rejects the message with
-// 400 and it has URL buttons, the buttons are the likely cause (for example a
-// loopback kandev_url), so the text goes out once more without them; degraded
-// is then the original rejection. A 400 from that retry is returned as err.
+// 400 and it has URL buttons, the URLs are the likely cause (for example a
+// loopback kandev_url), so it is sent again with only its action buttons,
+// then as plain text; degraded is then the original rejection. A 400 from the
+// last retry is returned as err.
 func (b *bot) sendWithFallback(ctx context.Context, chatID int64, msg outMessage, replyTo int64) (degraded, err error) {
 	err = b.tg.SendMessage(ctx, chatID, msg, replyTo)
 	if err == nil || !isBadRequest(err) || len(msg.Buttons) == 0 {
 		return nil, err
+	}
+	var retryErr error
+	if actions := msg.withoutLinks(); msg.hasLinks() && len(actions.Buttons) > 0 {
+		retryErr = b.tg.SendMessage(ctx, chatID, actions, replyTo)
+		if retryErr == nil {
+			return err, nil
+		}
+		if !isBadRequest(retryErr) {
+			return nil, retryErr
+		}
 	}
 	if plainErr := b.tg.SendMessage(ctx, chatID, outMessage{Text: msg.Text}, replyTo); plainErr != nil {
 		return nil, plainErr
@@ -370,7 +395,8 @@ func (b *bot) taskAlertFromEvent(ctx context.Context, payload map[string]any) (a
 	if title == "" {
 		title = untitledTask
 	}
-	return b.queueTaskAlert(ctx, alert{Kind: kind, TaskID: taskID, TaskTitle: title}, newState+"@"+updatedAt)
+	workflowID, _ := payload["workflow_id"].(string)
+	return b.queueTaskAlert(ctx, alert{Kind: kind, TaskID: taskID, TaskTitle: title, WorkflowID: workflowID}, newState+"@"+updatedAt)
 }
 
 // queueTaskAlert queues a once per task and marker; ok is false when the

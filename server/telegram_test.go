@@ -102,7 +102,7 @@ func TestHTTPTelegram_GetUpdatesRequestAndDecode(t *testing.T) {
 	body := stub.recorded()[0].Body
 	require.InEpsilon(t, float64(10), body["offset"], 0)
 	require.InEpsilon(t, float64(30), body["timeout"], 0)
-	require.Equal(t, []any{"message"}, body["allowed_updates"])
+	require.Equal(t, []any{"message", "callback_query"}, body["allowed_updates"], "button presses arrive as callback queries")
 }
 
 func TestHTTPTelegram_SendMessageBody(t *testing.T) {

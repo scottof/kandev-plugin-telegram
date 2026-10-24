@@ -47,12 +47,38 @@ type alert struct {
 	TaskID    string
 	TaskTitle string
 	Detail    string
+	// WorkflowID is used by the workflow filter; empty means unknown.
+	WorkflowID string
 }
 
-// linkButton is an inline keyboard URL button.
+// linkButton is an inline keyboard button: a URL button, or an action button
+// whose Data comes back to the bot as a callback query when pressed.
 type linkButton struct {
 	Text string
 	URL  string
+	Data string
+}
+
+func (b linkButton) isAction() bool { return b.Data != "" }
+
+// withoutLinks keeps only the action buttons of msg.
+func (m outMessage) withoutLinks() outMessage {
+	out := outMessage{Text: m.Text}
+	for _, b := range m.Buttons {
+		if b.isAction() {
+			out.Buttons = append(out.Buttons, b)
+		}
+	}
+	return out
+}
+
+func (m outMessage) hasLinks() bool {
+	for _, b := range m.Buttons {
+		if !b.isAction() {
+			return true
+		}
+	}
+	return false
 }
 
 // outMessage is a bot message before it is addressed to a chat.
@@ -98,10 +124,8 @@ func formatAlerts(alerts []alert, base string) outMessage {
 		if a.Detail != "" {
 			text += "\n" + truncateRunes(a.Detail, maxDetailRunes)
 		}
-		return outMessage{
-			Text:    capMessage(text),
-			Buttons: []linkButton{{Text: "Open task", URL: taskURL(base, a.TaskID)}},
-		}
+		buttons := append([]linkButton{{Text: "Open task", URL: taskURL(base, a.TaskID)}}, taskActions(a.TaskID, a.Kind)...)
+		return outMessage{Text: capMessage(text), Buttons: buttons}
 	}
 
 	lines := []string{fmt.Sprintf("%d updates from kandev:", len(alerts))}

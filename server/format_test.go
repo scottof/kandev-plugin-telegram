@@ -55,12 +55,28 @@ func TestInteractionAlert_ClarificationUsesFirstLineOfFirstQuestion(t *testing.T
 func TestFormatAlerts_Single(t *testing.T) {
 	msg := formatAlerts([]alert{{Kind: alertPermission, TaskID: "task-1", TaskTitle: "Fix login", Detail: "Run npm test (execute)"}}, testBase)
 	require.Equal(t, "Needs permission: Fix login\nRun npm test (execute)", msg.Text)
-	require.Equal(t, []linkButton{{Text: "Open task", URL: testBase + "/t/task-1"}}, msg.Buttons)
+	require.Equal(t, []linkButton{
+		{Text: "Open task", URL: testBase + "/t/task-1"},
+		{Text: "Mute", Data: "m:task-1"},
+		{Text: "Done", Data: "d:task-1"},
+	}, msg.Buttons)
 }
 
 func TestFormatAlerts_SingleWithoutDetail(t *testing.T) {
 	msg := formatAlerts([]alert{{Kind: alertCompleted, TaskID: "task-1", TaskTitle: "Fix login"}}, testBase)
 	require.Equal(t, "Finished: Fix login", msg.Text)
+	require.Equal(t, []linkButton{{Text: "Open task", URL: testBase + "/t/task-1"}, {Text: "Mute", Data: "m:task-1"}}, msg.Buttons,
+		"a finished task gets no Done button")
+}
+
+func TestFormatAlerts_BatchHasNoActionButtons(t *testing.T) {
+	msg := formatAlerts([]alert{
+		{Kind: alertFailed, TaskID: "task-1", TaskTitle: "A"},
+		{Kind: alertFailed, TaskID: "task-2", TaskTitle: "B"},
+	}, testBase)
+	for _, b := range msg.Buttons {
+		require.False(t, b.isAction(), "actions are only offered when the message is about one task")
+	}
 }
 
 func TestFormatAlerts_BatchesManyAlertsIntoOneMessage(t *testing.T) {

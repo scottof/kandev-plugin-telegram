@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.1.5] - 2026-10-24
+
+### Added
+
+- Alerts about one task have Mute and Done buttons. Mute stops alerts for that task until `/unmute`; Done moves it to
+  the workflow's finishing column, or its last column when none is named like one.
+- `/task <words>` shows a task's workflow, column and state with the same buttons.
+- `/mute <words>` and `/unmute` (a list, a task, or `all`).
+- Optional quiet hours, off by default: alerts are held and sent as one batch when the window ends. The time zone
+  defaults to Europe/Amsterdam.
+- Optional workflow filter: alert only for the workflows you name.
+- The bot registers its commands with Telegram, so they show in the chat's command menu.
+- `/status` notes muted tasks and active quiet hours.
+
+### Changed
+
+- When Telegram refuses a link button, an alert keeps its Mute and Done buttons before falling back to plain text.
+
 ## [0.1.4] - 2026-10-24
 
 ### Fixed

@@ -66,8 +66,23 @@ type tgMessage struct {
 }
 
 type tgUpdate struct {
-	UpdateID int64      `json:"update_id"`
-	Message  *tgMessage `json:"message,omitempty"`
+	UpdateID      int64            `json:"update_id"`
+	Message       *tgMessage       `json:"message,omitempty"`
+	CallbackQuery *tgCallbackQuery `json:"callback_query,omitempty"`
+}
+
+// tgCallbackQuery is a press on an action button.
+type tgCallbackQuery struct {
+	ID      string     `json:"id"`
+	From    tgUser     `json:"from"`
+	Message *tgMessage `json:"message,omitempty"`
+	Data    string     `json:"data,omitempty"`
+}
+
+// tgBotCommand is one entry of the bot's command menu.
+type tgBotCommand struct {
+	Command     string `json:"command"`
+	Description string `json:"description"`
 }
 
 // telegramClient is the slice of the Bot API the plugin uses.
@@ -78,6 +93,10 @@ type telegramClient interface {
 	SendMessage(ctx context.Context, chatID int64, msg outMessage, replyTo int64) error
 	// SetReaction puts one emoji reaction on a message.
 	SetReaction(ctx context.Context, chatID, messageID int64, emoji string) error
+	// AnswerCallback acknowledges a button press with a short notice.
+	AnswerCallback(ctx context.Context, callbackID, text string) error
+	// SetCommands replaces the bot's command menu.
+	SetCommands(ctx context.Context, commands []tgBotCommand) error
 	// HoldRemaining is how long calls still wait out the last retry_after.
 	HoldRemaining() time.Duration
 }
@@ -144,7 +163,7 @@ func (c *httpTelegram) GetUpdates(ctx context.Context, offset int64, timeoutSeco
 	req := map[string]any{
 		"offset":          offset,
 		"timeout":         timeoutSeconds,
-		"allowed_updates": []string{"message"},
+		"allowed_updates": []string{"message", "callback_query"},
 	}
 	var updates []tgUpdate
 	err := c.call(ctx, "getUpdates", req, &updates, time.Duration(timeoutSeconds)*time.Second+pollRequestHeadroom)
@@ -152,8 +171,9 @@ func (c *httpTelegram) GetUpdates(ctx context.Context, offset int64, timeoutSeco
 }
 
 type tgInlineButton struct {
-	Text string `json:"text"`
-	URL  string `json:"url"`
+	Text         string `json:"text"`
+	URL          string `json:"url,omitempty"`
+	CallbackData string `json:"callback_data,omitempty"`
 }
 
 type tgSendMessage struct {
@@ -173,14 +193,37 @@ func (c *httpTelegram) SendMessage(ctx context.Context, chatID int64, msg outMes
 	if replyTo != 0 {
 		req.ReplyParameters = map[string]any{"message_id": replyTo}
 	}
-	if len(msg.Buttons) > 0 {
-		rows := make([][]tgInlineButton, 0, len(msg.Buttons))
-		for _, b := range msg.Buttons {
-			rows = append(rows, []tgInlineButton{{Text: b.Text, URL: b.URL}})
-		}
+	if rows := keyboardRows(msg.Buttons); len(rows) > 0 {
 		req.ReplyMarkup = map[string]any{"inline_keyboard": rows}
 	}
 	return c.call(ctx, "sendMessage", req, nil, sendRequestTimeout)
+}
+
+// keyboardRows puts each URL button on its own row and the action buttons
+// together on one row below them.
+func keyboardRows(buttons []linkButton) [][]tgInlineButton {
+	var rows [][]tgInlineButton
+	var actions []tgInlineButton
+	for _, b := range buttons {
+		if b.isAction() {
+			actions = append(actions, tgInlineButton{Text: b.Text, CallbackData: b.Data})
+			continue
+		}
+		rows = append(rows, []tgInlineButton{{Text: b.Text, URL: b.URL}})
+	}
+	if len(actions) > 0 {
+		rows = append(rows, actions)
+	}
+	return rows
+}
+
+func (c *httpTelegram) AnswerCallback(ctx context.Context, callbackID, text string) error {
+	req := map[string]any{"callback_query_id": callbackID, "text": text}
+	return c.call(ctx, "answerCallbackQuery", req, nil, sendRequestTimeout)
+}
+
+func (c *httpTelegram) SetCommands(ctx context.Context, commands []tgBotCommand) error {
+	return c.call(ctx, "setMyCommands", map[string]any{"commands": commands}, nil, sendRequestTimeout)
 }
 
 func (c *httpTelegram) SetReaction(ctx context.Context, chatID, messageID int64, emoji string) error {
