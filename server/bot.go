@@ -35,6 +35,9 @@ type bot struct {
 	retryAt time.Time
 	// queueMu serialises read-modify-write of the task alert queue in state.
 	queueMu sync.Mutex
+	// notifyMu serialises notify_user calls so two calls with one key cannot
+	// both find no record and both send.
+	notifyMu sync.Mutex
 }
 
 func newBot(host pluginsdk.Host, tg telegramClient, cfg config, clk clock, botUsername string) *bot {
@@ -92,6 +95,18 @@ func (b *bot) writeStatus(ctx context.Context) {
 
 func (b *bot) now() string {
 	return b.clock.Now().UTC().Format(time.RFC3339)
+}
+
+// workingEmoji marks a command the bot has started on, since triage can take
+// a while. It must be one of the reactions Telegram allows for bots.
+const workingEmoji = "👀"
+
+// acknowledge reacts to msg so the sender sees the command was received. It
+// is best effort: a failed reaction never holds up the command.
+func (b *bot) acknowledge(ctx context.Context, msg *tgMessage) {
+	if err := b.tg.SetReaction(ctx, msg.Chat.ID, msg.MessageID, workingEmoji); err != nil && ctx.Err() == nil {
+		log.Printf("telegram: reacting to a command: %v", err)
+	}
 }
 
 // reply answers msg in its chat. Send errors are logged, never returned: one

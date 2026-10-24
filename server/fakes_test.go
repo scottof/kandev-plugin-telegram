@@ -112,6 +112,8 @@ type fakeData struct {
 	// a profile, which kandev resolves to its utility default).
 	agentErrByProfile map[string]error
 	agentProfileCalls []string
+	// onAgentInvoke runs inside InvokeUtilityAgent, with the data lock held.
+	onAgentInvoke func()
 }
 
 func (h *fakeHost) data() *fakeData { return h.d }
@@ -151,6 +153,9 @@ func (h *fakeHost) InvokeUtilityAgent(_ context.Context, prompt string, options 
 		profileID = options[0].ProfileID
 	}
 	d.agentProfileCalls = append(d.agentProfileCalls, profileID)
+	if d.onAgentInvoke != nil {
+		d.onAgentInvoke()
+	}
 	if err, ok := d.agentErrByProfile[profileID]; ok {
 		return "", err
 	}
@@ -356,6 +361,13 @@ type fakeTelegram struct {
 	hold               time.Duration
 	onSend             func()
 	onDrained          func()
+	reactions          []fakeReaction
+	reactionErr        error
+}
+
+type fakeReaction struct {
+	ChatID, MessageID int64
+	Emoji             string
 }
 
 type fakeUpdatesResult struct {
@@ -480,6 +492,19 @@ func (f *fakeTelegram) setHold(d time.Duration) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.hold = d
+}
+
+func (f *fakeTelegram) SetReaction(_ context.Context, chatID, messageID int64, emoji string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.reactions = append(f.reactions, fakeReaction{ChatID: chatID, MessageID: messageID, Emoji: emoji})
+	return f.reactionErr
+}
+
+func (f *fakeTelegram) sentReactions() []fakeReaction {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]fakeReaction(nil), f.reactions...)
 }
 
 func (f *fakeTelegram) HoldRemaining() time.Duration {

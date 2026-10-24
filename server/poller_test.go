@@ -264,6 +264,35 @@ func TestPollOnce_RepliesWithoutButtonsWhenTelegramRefusesThem(t *testing.T) {
 	require.Equal(t, 4, tg.sendAttempts(), "one refused try and one plain retry per reply")
 }
 
+func TestPollOnce_NewReactsBeforeTriage(t *testing.T) {
+	b, host, tg := newTriageBot(t)
+	host.data().agentReply = `{"workspace_id":"ws-1","workflow_id":"wf-1","title":"Write docs"}`
+	var reactionsDuringTriage int
+	host.data().onAgentInvoke = func() { reactionsDuringTriage = len(tg.sentReactions()) }
+	tg.queueUpdates(privateText(1, 42, "/new write the docs"), privateText(2, 42, "/status"), privateText(3, 42, "/new"))
+
+	_, err := b.pollOnce(context.Background(), 0)
+	require.NoError(t, err)
+	require.Equal(t, []fakeReaction{{ChatID: 42, MessageID: 10, Emoji: "👀"}}, tg.sentReactions(),
+		"only a /new with text gets the reaction, on the command message")
+	require.Equal(t, 1, reactionsDuringTriage, "the reaction is shown while triage runs")
+	require.Len(t, tg.sentMessages(), 3)
+}
+
+func TestPollOnce_FailedReactionStillFilesTheTask(t *testing.T) {
+	b, host, tg := newTriageBot(t)
+	host.data().agentReply = `{"workspace_id":"ws-1","workflow_id":"wf-1","title":"Write docs"}`
+	tg.reactionErr = badRequest("Bad Request: REACTION_INVALID")
+	tg.queueUpdates(privateText(1, 42, "/new write the docs"))
+
+	_, err := b.pollOnce(context.Background(), 0)
+	require.NoError(t, err)
+	require.Len(t, host.data().created, 1)
+	sent := tg.sentMessages()
+	require.Len(t, sent, 1)
+	require.Contains(t, sent[0].Msg.Text, "Write docs")
+}
+
 func TestPollOnce_ReplyKeepsButtonsWhenTelegramAcceptsThem(t *testing.T) {
 	tg := newFakeTelegram()
 	b := newTestBot(t, newFakeHost(), tg)

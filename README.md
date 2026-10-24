@@ -6,8 +6,11 @@ A [kandev](https://github.com/kdlbs/kandev) plugin that connects a Telegram bot 
   is completed or fails to start. Each alert has a button that opens the task in kandev. You answer in kandev, not in
   Telegram.
 - **`/new <text>`** files a task. A triage agent picks the workspace, workflow and column, and the bot replies with a
-  link. Reply to an earlier message with `/new` to pass that message along as context.
+  link. It reacts with 👀 to your message while the agent works. Reply to an earlier message with `/new` to pass that
+  message along as context.
 - **`/status`** lists running tasks and agents waiting on you, with a link to the needs-you inbox.
+- **`notify_user` for agents.** An agent working on a task can message you on Telegram, for example when a deploy
+  finishes or it is blocked. See [Agent notifications](#agent-notifications).
 
 The bot uses long polling (`getUpdates`), so kandev can stay on localhost. No public URL or webhook is needed.
 
@@ -31,7 +34,7 @@ Requires kandev 0.95.0 or newer.
    | kandev URL | The base URL your phone uses to open kandev, for example `https://my-laptop.tailnet-name.ts.net:38429` over Tailscale. It is only used to build links, and must not contain a user name, password, query string or fragment. A `localhost` address works for the settings check but not on a phone, and the status card warns about it. |
    | Triage agent profile | The agent profile `/new` uses. Not set means the default from Settings > Utility Agents; when that is not set either and kandev has a single workspace, the workspace's default agent is used. The profile must be enabled, global and not a CLI passthrough. |
    | Start an agent on tasks filed with /new | Off by default. When on, the text of a message you reply to also reaches the triage prompt, so do not reply to forwarded text you do not trust. |
-   | Alert toggles | Waiting agents, completed tasks and failed tasks are on by default. Review alerts are off by default (see below). |
+   | Alert toggles | Waiting agents, completed tasks and failed tasks are on by default. Review alerts and column alerts are off by default (see below). |
 
    kandev restarts the plugin when you save.
 6. **Approve capabilities if asked.** If the plugin page shows a capability approval section, approve the requested
@@ -50,6 +53,10 @@ Requires kandev 0.95.0 or newer.
     moves the task to `REVIEW` instead.
   - *Waiting for review*: the task moved to `REVIEW`. This happens after **every** agent turn, so it is off by default.
   - Quick chat tasks never alert.
+- **Column alerts** (off by default) come from `task.moved`: "Moved: <task>" with the old and new column. They fire
+  for every column change, including the moves kandev makes on its own, for example to Review after an agent turn.
+  A move that completes the task is left to the *Completed* alert when that one is on. Without this setting, dragging
+  a card only alerts when it changes the task's state, as moving it to a column that completes tasks does.
   - kandev can drop events under load, so task alerts are best-effort. Waiting-agent alerts are not, because they are
     read from the durable list.
 - A burst of alerts is sent as one message with up to ten task buttons.
@@ -62,6 +69,41 @@ Requires kandev 0.95.0 or newer.
 - Delivery is tracked per allowed user. A user Telegram cannot reach (for example one who never sent `/start`) does not
   hold alerts back from the others, and a user who already got an alert is not sent it again while another user's
   delivery is retried.
+
+## Agent notifications
+
+The plugin gives agents in kanban and office tasks a `notify_user` tool. Kandev shows it to the agent under a
+server-qualified name. A call takes:
+
+| Argument | Rule |
+| --- | --- |
+| `message` | Plain text, 1 to 3500 characters. No formatting is applied. |
+| `idempotency_key` | 1 to 128 characters: a letter or digit, then letters, digits, `.`, `_`, `:`, `/`, `-`. Use one stable key per event. |
+| `recipient` | Optional. One Telegram user id from the allowed list. Without it, every allowed user gets the message. |
+
+The task the agent works on comes from kandev, not from the arguments. The message gets a "From task" line and an
+**Open task** button (plain text when Telegram refuses the link, as with `localhost`).
+
+The result's `status` is `delivered`, `partial`, `failed`, `uncertain` or `rejected`. Repeating a key returns the
+stored result with `duplicate: true` and sends nothing. The same key with a different message is rejected. When
+Telegram did not confirm a send, the result is `uncertain` and the key stays blocked, so an agent cannot send the
+same message twice by retrying. While Telegram asks the bot to wait, the call fails at once with
+`retry_after_seconds` and the key stays free.
+
+## Troubleshooting
+
+| Problem | What to do |
+| --- | --- |
+| The bot never answers | Check that your numeric id is in *Allowed Telegram user ids* and that you sent `/start`. The status card's *Last update* shows whether the bot received anything. |
+| "entry N is not a numeric Telegram user id" | The field takes numeric ids, not usernames. [@userinfobot](https://t.me/userinfobot) tells you yours. |
+| Alerts and replies arrive without buttons, and the card warns about the kandev URL | Telegram refuses links to `localhost` and IP addresses. Use a name your phone can reach, such as a Tailscale address. |
+| "Triage failed: no agent profile for /new" | Pick a *Triage agent profile* on the plugin page, or a default in Settings > Utility Agents. With a single workspace, its default agent is also used. |
+| "Triage failed: the Triage agent profile ... cannot answer one-shot requests" | Pick an enabled, global profile that is not a CLI passthrough. |
+| `/status`, alerts or `/new` cannot read or create tasks | Approve the plugin under *Workspace access* on the plugin page. Kandev may ask again after an upgrade that changes what the plugin declares. |
+| The test message says users must send `/start` | Each allowed user opens the bot and sends `/start` once. |
+| "Telegram asked the bot to wait N s" | Telegram is rate limiting the bot. Wait and try again. |
+| The status card shows a 409 error | Another program polls the same bot token. Stop it, or create a separate bot. |
+| Moving a card does not alert | Alerts follow the task's state. Turn on *Alert when a task changes column*. |
 
 ## Limits
 
@@ -93,7 +135,7 @@ make verify-package
 Install the resulting `kandev-plugin-telegram-<version>.tar.gz` from Settings > Plugins, or:
 
 ```sh
-curl -F package=@kandev-plugin-telegram-0.1.2.tar.gz "$KANDEV_URL/api/plugins/install"
+curl -F package=@kandev-plugin-telegram-0.1.3.tar.gz "$KANDEV_URL/api/plugins/install"
 ```
 
 ## Development
@@ -121,6 +163,7 @@ server/              Go plugin binary
   status.go          /status
   webhooks.go        settings card backend
   telegram.go        Bot API client (the token never reaches logs or errors)
+  notify.go          notify_user agent tool
 ui/bundle.js         settings status card (no build step)
 tests/               UI tests
 docs/PITCH.md        v1 scope

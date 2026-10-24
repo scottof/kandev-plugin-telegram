@@ -16,6 +16,7 @@ func TestLoadConfig_Defaults(t *testing.T) {
 	require.True(t, cfg.AlertCompleted)
 	require.True(t, cfg.AlertFailed)
 	require.False(t, cfg.AlertReview)
+	require.False(t, cfg.AlertColumnMoves)
 	require.ElementsMatch(t, []string{"bot_token", "kandev_url"}, cfg.missingSettings())
 }
 
@@ -30,6 +31,7 @@ func TestLoadConfig_AllFields(t *testing.T) {
 		"alert_completed":      false,
 		"alert_failed":         false,
 		"alert_review":         true,
+		"alert_column_moves":   true,
 	})
 	require.NoError(t, err)
 	require.Equal(t, "123:abc", cfg.BotToken)
@@ -41,6 +43,7 @@ func TestLoadConfig_AllFields(t *testing.T) {
 	require.False(t, cfg.AlertCompleted)
 	require.False(t, cfg.AlertFailed)
 	require.True(t, cfg.AlertReview)
+	require.True(t, cfg.AlertColumnMoves)
 	require.Empty(t, cfg.missingSettings())
 }
 

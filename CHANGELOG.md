@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.1.3] - 2026-10-24
+
+### Added
+
+- `notify_user` tool for agents in kanban and office tasks: one plain-text message to the allowed users, or one of
+  them, with a link to the task. Repeated idempotency keys never send twice.
+- The bot reacts with 👀 to a `/new` command while the triage agent works.
+- Optional column alerts ("Moved: <task>" with the old and new column), off by default.
+- A Troubleshooting section in the README.
+
 ## [0.1.2] - 2026-10-24
 
 ### Changed

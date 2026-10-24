@@ -21,6 +21,7 @@ type config struct {
 	AlertCompleted     bool
 	AlertFailed        bool
 	AlertReview        bool
+	AlertColumnMoves   bool
 }
 
 // loadConfig parses the raw GetConfig map. Defaults mirror the manifest
@@ -34,6 +35,7 @@ func loadConfig(raw map[string]any) (config, error) {
 		AlertCompleted:     configBool(raw, "alert_completed", true),
 		AlertFailed:        configBool(raw, "alert_failed", true),
 		AlertReview:        configBool(raw, "alert_review", false),
+		AlertColumnMoves:   configBool(raw, "alert_column_moves", false),
 	}
 
 	ids, err := parseUserIDs(configString(raw, "allowed_user_ids"))

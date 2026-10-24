@@ -76,6 +76,8 @@ type telegramClient interface {
 	GetUpdates(ctx context.Context, offset int64, timeoutSeconds int) ([]tgUpdate, error)
 	// SendMessage sends plain text; replyTo of 0 means not a reply.
 	SendMessage(ctx context.Context, chatID int64, msg outMessage, replyTo int64) error
+	// SetReaction puts one emoji reaction on a message.
+	SetReaction(ctx context.Context, chatID, messageID int64, emoji string) error
 	// HoldRemaining is how long calls still wait out the last retry_after.
 	HoldRemaining() time.Duration
 }
@@ -179,6 +181,15 @@ func (c *httpTelegram) SendMessage(ctx context.Context, chatID int64, msg outMes
 		req.ReplyMarkup = map[string]any{"inline_keyboard": rows}
 	}
 	return c.call(ctx, "sendMessage", req, nil, sendRequestTimeout)
+}
+
+func (c *httpTelegram) SetReaction(ctx context.Context, chatID, messageID int64, emoji string) error {
+	req := map[string]any{
+		"chat_id":    chatID,
+		"message_id": messageID,
+		"reaction":   []map[string]string{{"type": "emoji", "emoji": emoji}},
+	}
+	return c.call(ctx, "setMessageReaction", req, nil, sendRequestTimeout)
 }
 
 // call performs one Bot API method, retrying once after a 429 retry_after.

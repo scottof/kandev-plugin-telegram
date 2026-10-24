@@ -27,6 +27,7 @@ const (
 	alertCompleted     alertKind = "completed"
 	alertFailed        alertKind = "failed"
 	alertReview        alertKind = "review"
+	alertMoved         alertKind = "moved"
 	alertRunning       alertKind = "running" // only used by /status
 )
 
@@ -36,6 +37,7 @@ var alertLabels = map[alertKind]string{
 	alertCompleted:     "Finished",
 	alertFailed:        "Failed",
 	alertReview:        "Waiting for review",
+	alertMoved:         "Moved",
 	alertRunning:       "Running",
 }
 

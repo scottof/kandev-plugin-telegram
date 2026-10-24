@@ -142,6 +142,7 @@ func (b *bot) handleUpdate(ctx context.Context, u tgUpdate) {
 		if msg.ReplyToMessage != nil {
 			req.ReplyContext = msg.ReplyToMessage.Text
 		}
+		b.acknowledge(ctx, msg)
 		b.reply(ctx, msg, b.fileTask(ctx, req))
 	default:
 		b.reply(ctx, msg, outMessage{Text: helpText})

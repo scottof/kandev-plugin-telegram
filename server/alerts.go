@@ -12,6 +12,7 @@ import (
 const (
 	eventTaskStateChanged     = "task.state_changed"
 	eventPendingActionChanged = "session.pending_action_changed"
+	eventTaskMoved            = "task.moved"
 
 	reconcileInterval = 15 * time.Second
 	alertDebounce     = 2 * time.Second
@@ -365,29 +366,105 @@ func (b *bot) taskAlertFromEvent(ctx context.Context, payload map[string]any) (a
 	}
 
 	updatedAt, _ := payload["updated_at"].(string)
-	marker := newState + "@" + updatedAt
-	alertLog, err := b.store.taskAlerts(ctx)
-	if err != nil {
-		return alert{}, false, err
-	}
-	if alertLog.seen(taskID, marker) {
-		return alert{}, false, nil
-	}
-
 	title, _ := payload["title"].(string)
 	if title == "" {
 		title = untitledTask
 	}
-	a := alert{Kind: kind, TaskID: taskID, TaskTitle: title}
+	return b.queueTaskAlert(ctx, alert{Kind: kind, TaskID: taskID, TaskTitle: title}, newState+"@"+updatedAt)
+}
+
+// queueTaskAlert queues a once per task and marker; ok is false when the
+// marker was already seen, for example on a redelivered event.
+func (b *bot) queueTaskAlert(ctx context.Context, a alert, marker string) (alert, bool, error) {
+	alertLog, err := b.store.taskAlerts(ctx)
+	if err != nil {
+		return alert{}, false, err
+	}
+	if alertLog.seen(a.TaskID, marker) {
+		return alert{}, false, nil
+	}
 	// Queue before marking seen: if the marker write fails, the redelivered
 	// event finds the alert already queued instead of losing it.
 	if err := b.enqueue(ctx, queuedTaskAlert{alert: a, Marker: marker}); err != nil {
 		return alert{}, false, err
 	}
-	if err := b.store.setTaskAlerts(ctx, alertLog.add(taskID, marker)); err != nil {
+	if err := b.store.setTaskAlerts(ctx, alertLog.add(a.TaskID, marker)); err != nil {
 		return alert{}, false, err
 	}
 	return a, true, nil
+}
+
+// moveAlertFromEvent maps a task.moved payload to an opt-in column alert.
+// kandev also moves tasks itself, for example to Review when an agent turn
+// ends, and those moves alert too. A move that completed the task is left to
+// the Finished alert when that one is on.
+func (b *bot) moveAlertFromEvent(ctx context.Context, payload map[string]any) (alert, bool, error) {
+	if !b.cfg.AlertColumnMoves {
+		return alert{}, false, nil
+	}
+	taskID, _ := payload["task_id"].(string)
+	fromStep, _ := payload["from_step_id"].(string)
+	toStep, _ := payload["to_step_id"].(string)
+	if taskID == "" || toStep == "" || fromStep == toStep {
+		return alert{}, false, nil
+	}
+
+	task, err := b.host.Tasks().Get(ctx, taskID)
+	if err != nil {
+		return alert{}, false, err
+	}
+	if task == nil || task.IsEphemeral || (task.State == "COMPLETED" && b.cfg.AlertCompleted) {
+		return alert{}, false, nil
+	}
+	title := task.Title
+	if title == "" {
+		title = untitledTask
+	}
+
+	toWorkflow, _ := payload["to_workflow_id"].(string)
+	fromWorkflow, _ := payload["from_workflow_id"].(string)
+	names := b.stepNames(ctx, toWorkflow, fromWorkflow)
+	detail := columnName(names, toStep)
+	if fromStep != "" {
+		detail = columnName(names, fromStep) + " to " + detail
+	}
+
+	transition, _ := payload["step_transition_id"].(string)
+	if transition == "" {
+		transition, _ = payload["move_id"].(string)
+	}
+	marker := "moved:" + fromStep + ">" + toStep + "@" + transition
+	return b.queueTaskAlert(ctx, alert{Kind: alertMoved, TaskID: taskID, TaskTitle: title, Detail: detail}, marker)
+}
+
+// stepNames maps step ids to column names for the given workflows. A
+// workflow whose steps cannot be read is skipped; its columns then show as
+// unknown rather than failing the alert.
+func (b *bot) stepNames(ctx context.Context, workflowIDs ...string) map[string]string {
+	names := map[string]string{}
+	seen := map[string]bool{}
+	for _, id := range workflowIDs {
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		steps, err := b.host.Workflows().ListSteps(ctx, id)
+		if err != nil {
+			log.Printf("telegram: reading columns of a workflow: %v", err)
+			continue
+		}
+		for _, s := range steps {
+			names[s.ID] = s.Name
+		}
+	}
+	return names
+}
+
+func columnName(names map[string]string, stepID string) string {
+	if name := names[stepID]; name != "" {
+		return name
+	}
+	return "another column"
 }
 
 func sameSet(a, b map[string]bool) bool {

@@ -125,6 +125,17 @@ func TestHTTPTelegram_SendMessageBody(t *testing.T) {
 	}}, call.Body["reply_markup"])
 }
 
+func TestHTTPTelegram_SetReactionBody(t *testing.T) {
+	stub, srv := newStubTelegram(t)
+	require.NoError(t, newTestClient(srv, newFakeClock()).SetReaction(context.Background(), 42, 7, workingEmoji))
+
+	call := stub.recorded()[0]
+	require.Equal(t, "setMessageReaction", call.Method)
+	require.InEpsilon(t, float64(42), call.Body["chat_id"], 0)
+	require.InEpsilon(t, float64(7), call.Body["message_id"], 0)
+	require.Equal(t, []any{map[string]any{"type": "emoji", "emoji": "👀"}}, call.Body["reaction"])
+}
+
 func TestHTTPTelegram_SendMessageWithoutButtonsOrReply(t *testing.T) {
 	stub, srv := newStubTelegram(t)
 	require.NoError(t, newTestClient(srv, newFakeClock()).SendMessage(context.Background(), 42, outMessage{Text: "hi"}, 0))
