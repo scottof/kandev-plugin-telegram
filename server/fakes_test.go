@@ -103,6 +103,13 @@ type fakeData struct {
 	repositories []pluginsdk.Repository
 	created      []pluginsdk.CreateTaskInput
 	createErr    error
+	// createdState is the state Create reports, as a step that completes
+	// tasks would.
+	createdState string
+	// onCreate runs inside Create, with the data lock held.
+	onCreate func()
+	moves    []pluginsdk.MoveTaskInput
+	moveErr  error
 
 	agentReply   string
 	agentErr     error
@@ -262,9 +269,22 @@ func (f *fakeTasks) Create(_ context.Context, in pluginsdk.CreateTaskInput) (*pl
 		return nil, f.d.createErr
 	}
 	f.d.created = append(f.d.created, in)
-	task := pluginsdk.Task{ID: "task-new", Identifier: "KAN-7", Title: in.Title, WorkspaceID: in.WorkspaceID, WorkflowID: in.WorkflowID}
+	task := pluginsdk.Task{ID: "task-new", Identifier: "KAN-7", Title: in.Title, WorkspaceID: in.WorkspaceID, WorkflowID: in.WorkflowID, State: f.d.createdState}
 	f.d.tasks = append(f.d.tasks, task)
+	if f.d.onCreate != nil {
+		f.d.onCreate()
+	}
 	return &task, nil
+}
+
+func (f *fakeTasks) Move(_ context.Context, in pluginsdk.MoveTaskInput) (*pluginsdk.MoveTaskOutcome, error) {
+	f.d.mu.Lock()
+	defer f.d.mu.Unlock()
+	if f.d.moveErr != nil {
+		return nil, f.d.moveErr
+	}
+	f.d.moves = append(f.d.moves, in)
+	return &pluginsdk.MoveTaskOutcome{Transitioned: true}, nil
 }
 
 type fakeInteractions struct {

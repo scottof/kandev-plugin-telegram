@@ -132,7 +132,9 @@ func (b *bot) handleUpdate(ctx context.Context, u tgUpdate) {
 	}
 	switch cmd.Name {
 	case "status":
+		b.beginCommand(ctx, msg, cmd.Name)
 		b.reply(ctx, msg, b.statusMessage(ctx))
+		b.endCommand(ctx)
 	case "new":
 		if cmd.Args == "" {
 			b.reply(ctx, msg, outMessage{Text: newUsage})
@@ -142,8 +144,10 @@ func (b *bot) handleUpdate(ctx context.Context, u tgUpdate) {
 		if msg.ReplyToMessage != nil {
 			req.ReplyContext = msg.ReplyToMessage.Text
 		}
+		b.beginCommand(ctx, msg, cmd.Name)
 		b.acknowledge(ctx, msg)
 		b.reply(ctx, msg, b.fileTask(ctx, req))
+		b.endCommand(ctx)
 	default:
 		b.reply(ctx, msg, outMessage{Text: helpText})
 	}

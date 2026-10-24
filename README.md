@@ -6,8 +6,9 @@ A [kandev](https://github.com/kdlbs/kandev) plugin that connects a Telegram bot 
   is completed or fails to start. Each alert has a button that opens the task in kandev. You answer in kandev, not in
   Telegram.
 - **`/new <text>`** files a task. A triage agent picks the workspace, workflow and column, and the bot replies with a
-  link. It reacts with 👀 to your message while the agent works. Reply to an earlier message with `/new` to pass that
-  message along as context.
+  link and the column it used. It reacts with 👀 to your message while the agent works. Reply to an earlier message
+  with `/new` to pass that message along as context. A new task never lands in a column for finished work: a pick such
+  as Done goes to the workflow's start column, and a task kandev still reports as completed is moved back there.
 - **`/status`** lists running tasks and agents waiting on you, with a link to the needs-you inbox.
 - **`notify_user` for agents.** An agent working on a task can message you on Telegram, for example when a deploy
   finishes or it is blocked. See [Agent notifications](#agent-notifications).
@@ -53,12 +54,15 @@ Requires kandev 0.95.0 or newer.
     moves the task to `REVIEW` instead.
   - *Waiting for review*: the task moved to `REVIEW`. This happens after **every** agent turn, so it is off by default.
   - Quick chat tasks never alert.
-- **Column alerts** (off by default) come from `task.moved`: "Moved: <task>" with the old and new column. They fire
-  for every column change, including the moves kandev makes on its own, for example to Review after an agent turn.
-  A move that completes the task is left to the *Completed* alert when that one is on. Without this setting, dragging
-  a card only alerts when it changes the task's state, as moving it to a column that completes tasks does.
   - kandev can drop events under load, so task alerts are best-effort. Waiting-agent alerts are not, because they are
     read from the durable list.
+- **Column alerts** (off by default): "Moved: <task>" with the old and new column, for board moves and for the moves
+  kandev's workflows make, for example to Review after an agent turn. kandev reports the first kind with `task.moved`
+  and the second only with `task.updated`, so the plugin keeps each task's last seen column (up to 500 tasks) and
+  alerts once per change, whichever event arrives first. A task the plugin has never seen alerts from its second
+  column change on. A move that completes the task is left to the *Completed* alert when that one is on. Without
+  this setting, a card move only alerts when it changes the task's state, as moving it to a column that completes
+  tasks does.
 - A burst of alerts is sent as one message with up to ten task buttons.
 - During a Telegram outage, alerts wait in plugin state and go out on the next 15 second cycle, so a restart does not
   lose them. New kandev events do not make the bot retry sooner. When Telegram asks the bot to slow down (HTTP 429),
@@ -112,8 +116,9 @@ same message twice by retrying. While Telegram asks the bot to wait, the call fa
 - Private chats only. Group chats, media and voice notes are ignored.
 - One bot per kandev install. Telegram allows only one `getUpdates` caller per bot, so do not point a second program at
   the same token.
-- If the plugin restarts while it is handling a command, that command is dropped rather than replayed, so `/new`
-  never files a task twice.
+- If the plugin restarts while it is handling a command (saving its settings restarts it), that command is dropped
+  rather than replayed, so `/new` never files a task twice. After the restart the bot replies to the command to say
+  so, and for `/new` whether the task had already been created.
 
 ## Build and install
 
@@ -135,7 +140,7 @@ make verify-package
 Install the resulting `kandev-plugin-telegram-<version>.tar.gz` from Settings > Plugins, or:
 
 ```sh
-curl -F package=@kandev-plugin-telegram-0.1.3.tar.gz "$KANDEV_URL/api/plugins/install"
+curl -F package=@kandev-plugin-telegram-0.1.4.tar.gz "$KANDEV_URL/api/plugins/install"
 ```
 
 ## Development
@@ -164,6 +169,8 @@ server/              Go plugin binary
   webhooks.go        settings card backend
   telegram.go        Bot API client (the token never reaches logs or errors)
   notify.go          notify_user agent tool
+  moves.go           column alerts and the last seen column per task
+  inflight.go        notice for a command a restart cut short
 ui/bundle.js         settings status card (no build step)
 tests/               UI tests
 docs/PITCH.md        v1 scope

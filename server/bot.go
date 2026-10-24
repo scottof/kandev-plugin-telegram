@@ -38,6 +38,8 @@ type bot struct {
 	// notifyMu serialises notify_user calls so two calls with one key cannot
 	// both find no record and both send.
 	notifyMu sync.Mutex
+	// stepsMu serialises read-modify-write of the last-seen column log.
+	stepsMu sync.Mutex
 }
 
 func newBot(host pluginsdk.Host, tg telegramClient, cfg config, clk clock, botUsername string) *bot {
@@ -58,6 +60,7 @@ func newBot(host pluginsdk.Host, tg telegramClient, cfg config, clk clock, botUs
 // run blocks until ctx ends and both loops have stopped.
 func (b *bot) run(ctx context.Context) {
 	b.writeStatus(ctx)
+	b.reportInterrupted(ctx)
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {

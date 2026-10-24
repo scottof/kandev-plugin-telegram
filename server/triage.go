@@ -39,10 +39,37 @@ type topoWorkspace struct {
 }
 
 type topoWorkflow struct {
-	ID      string                   `json:"id"`
-	Name    string                   `json:"name"`
-	Columns []string                 `json:"columns"`
-	steps   []pluginsdk.WorkflowStep `json:"-"`
+	ID          string                   `json:"id"`
+	Name        string                   `json:"name"`
+	Columns     []string                 `json:"columns"`
+	StartColumn string                   `json:"start_column,omitempty"`
+	steps       []pluginsdk.WorkflowStep `json:"-"`
+}
+
+// startStep is where new work begins: the step kandev marks as the start,
+// else the first column.
+func (w topoWorkflow) startStep() (pluginsdk.WorkflowStep, bool) {
+	for _, s := range w.steps {
+		if s.IsStartStep {
+			return s, true
+		}
+	}
+	if len(w.steps) > 0 {
+		return w.steps[0], true
+	}
+	return pluginsdk.WorkflowStep{}, false
+}
+
+// finishingColumns are names of columns for finished work. The SDK does not
+// say which steps complete a task, so a triage pick among these is moved to
+// the start column, and a task created completed anyway is moved back.
+var finishingColumns = map[string]bool{
+	"done": true, "completed": true, "complete": true, "closed": true, "finished": true,
+	"shipped": true, "released": true, "archived": true, "archive": true, "resolved": true,
+}
+
+func isFinishingColumn(name string) bool {
+	return finishingColumns[strings.ToLower(strings.TrimSpace(name))]
 }
 
 // readTopology lists workspaces, their workflows (at most maxTriageWorkflows
@@ -81,6 +108,9 @@ func readTopology(ctx context.Context, host pluginsdk.Host) (topology, error) {
 				for _, s := range steps {
 					tf.Columns = append(tf.Columns, s.Name)
 				}
+				if start, ok := tf.startStep(); ok {
+					tf.StartColumn = start.Name
+				}
 			}
 			tw.Workflows = append(tw.Workflows, tf)
 		}
@@ -107,7 +137,7 @@ Reply with a single JSON object and nothing else, no prose and no code fence:
 
 Rules:
 - Copy workspace_id and workflow_id verbatim from the topology below. Never invent ids.
-- column is one of that workflow's column names, or empty for the workflow's default column.
+- column is one of that workflow's column names, or empty for its start_column, where new work begins. Never pick a column for finished work, such as Done: the task is new even if the request says it is small.
 - If nothing clearly fits, use the first workspace and its first workflow.
 - title is a short imperative summary of at most 80 characters.
 - description holds everything an agent needs to do the work. The agent cannot see Telegram, so include all context from the request.
@@ -168,6 +198,8 @@ type placement struct {
 	workspaceName string
 	workflowName  string
 	columnName    string
+	startStepID   string
+	startColumn   string
 }
 
 func (p placement) label() string {
@@ -199,7 +231,7 @@ func (t topology) resolve(d triageDecision) (placement, error) {
 		}
 	}
 	p := placement{WorkspaceID: ws.ID, WorkflowID: wf.ID, workspaceName: ws.Name, workflowName: wf.Name}
-	if column := strings.TrimSpace(d.Column); column != "" {
+	if column := strings.TrimSpace(d.Column); column != "" && !isFinishingColumn(column) {
 		for _, s := range wf.steps {
 			if strings.EqualFold(s.Name, column) {
 				id := s.ID
@@ -207,6 +239,13 @@ func (t topology) resolve(d triageDecision) (placement, error) {
 				p.columnName = s.Name
 				break
 			}
+		}
+	}
+	if start, ok := wf.startStep(); ok {
+		p.startStepID, p.startColumn = start.ID, start.Name
+		if p.StepID == nil {
+			// The host files a task without a step in the start column.
+			p.columnName = start.Name
 		}
 	}
 	return p, nil
@@ -238,6 +277,8 @@ func (b *bot) fileTask(ctx context.Context, req triageRequest) outMessage {
 	if err != nil {
 		return outMessage{Text: "Could not create the task: " + truncateRunes(err.Error(), maxReasonRunes)}
 	}
+	b.markInflightTask(ctx, task.ID)
+	note := b.reopenIfCompleted(ctx, task, &place)
 
 	answer := strings.TrimSpace(decision.Reply)
 	if answer == "" {
@@ -245,7 +286,28 @@ func (b *bot) fileTask(ctx context.Context, req triageRequest) outMessage {
 	}
 	heading := strings.TrimSpace(task.Identifier + " " + task.Title)
 	text := truncateRunes(answer, maxDetailRunes) + "\n" + truncateRunes(heading, maxTitleRunes) + "\nPlaced in " + place.label()
+	if note != "" {
+		text += "\n" + note
+	}
 	return outMessage{Text: capMessage(text), Buttons: []linkButton{{Text: "Open task", URL: taskURL(b.cfg.KandevURL, task.ID)}}}
+}
+
+// reopenIfCompleted moves a task that was created completed, because its
+// column finishes tasks, to the workflow's start column. It returns a line
+// for the reply, empty when nothing was moved.
+func (b *bot) reopenIfCompleted(ctx context.Context, task *pluginsdk.Task, place *placement) string {
+	if task == nil || task.State != "COMPLETED" || place.startStepID == "" || place.StepID == nil || *place.StepID == place.startStepID {
+		return ""
+	}
+	finished := place.columnName
+	if _, err := b.host.Tasks().Move(ctx, pluginsdk.MoveTaskInput{TaskID: task.ID, WorkflowStepID: place.startStepID}); err != nil {
+		return "Note: " + finished + " completes tasks, so the task is already completed. Moving it back failed: " +
+			truncateRunes(err.Error(), maxReasonRunes)
+	}
+	place.columnName = place.startColumn
+	id := place.startStepID
+	place.StepID = &id
+	return "Moved from " + finished + " to " + place.startColumn + ", because " + finished + " completes tasks."
 }
 
 func (b *bot) triage(ctx context.Context, req triageRequest) (triageDecision, placement, error) {

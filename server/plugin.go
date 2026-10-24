@@ -96,8 +96,8 @@ func (p *telegramPlugin) OnEvent(ctx context.Context, e *pluginsdk.Event) error 
 		if ok {
 			b.nudge()
 		}
-	case eventTaskMoved:
-		_, ok, err := b.moveAlertFromEvent(ctx, e.Payload)
+	case eventTaskMoved, eventTaskCreated, eventTaskUpdated:
+		_, ok, err := b.columnAlertFromEvent(ctx, e.EventType, e.Payload)
 		if err != nil {
 			return err
 		}

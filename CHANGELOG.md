@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.1.4] - 2026-10-24
+
+### Fixed
+
+- Column alerts now cover the moves kandev's workflows make, such as to Review after an agent turn. kandev reports
+  those only with `task.updated`, so the plugin tracks each task's last seen column.
+- A repeated identical column move alerts again; kandev can send board moves without a transition id.
+- `/new` no longer files a task into a column for finished work, such as Done, where kandev would complete it at once.
+- The `/new` reply names the column the task went to instead of "default column".
+- A command cut short by a plugin restart now gets a reply after the restart instead of silence.
+
 ## [0.1.3] - 2026-10-24
 
 ### Added

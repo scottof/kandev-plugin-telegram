@@ -2,7 +2,7 @@
 # Makefile BIN and the id passed to window.registerKandevPlugin in ui/bundle.js.
 id: "kandev-plugin-telegram"
 api_version: 1
-version: "0.1.3"
+version: "0.1.4"
 display_name: "Telegram"
 description: "Telegram bot for kandev: alerts with task links when an agent waits on a human or a task ends, /new to file a task through a triage agent, /status, and a notify_user tool agents can call."
 author: "scottof"
@@ -23,10 +23,12 @@ runtime:
     windows-amd64: "server/plugin-windows-amd64.exe"
 
 capabilities:
-  # task.state_changed drives finished/failed/review alerts; task.moved drives
-  # the opt-in column alert; session.pending_action_changed only triggers an
-  # early ListPending check.
-  events: ["task.state_changed", "task.moved", "session.pending_action_changed"]
+  # task.state_changed drives finished/failed/review alerts. task.created,
+  # task.updated and task.moved drive the opt-in column alert: kandev publishes
+  # task.moved only for board and API moves, and task.updated for the moves its
+  # workflows make. session.pending_action_changed only triggers an early
+  # ListPending check.
+  events: ["task.state_changed", "task.created", "task.updated", "task.moved", "session.pending_action_changed"]
   state: true
   agent_invoke: true
   api_read: ["workspaces", "workflows", "repositories", "tasks", "interactions"]
@@ -134,5 +136,5 @@ config_schema:
       default: false
     alert_column_moves:
       type: boolean
-      title: "Alert when a task changes column (including moves kandev makes after an agent turn)"
+      title: "Alert when a task changes column (board moves and the moves kandev makes after an agent turn)"
       default: false

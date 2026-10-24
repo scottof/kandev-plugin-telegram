@@ -113,7 +113,7 @@ func TestResolve(t *testing.T) {
 	require.Equal(t, "ws-1", p.WorkspaceID, "unknown workspace falls back to the first")
 	require.Equal(t, "wf-1", p.WorkflowID)
 	require.Nil(t, p.StepID, "unknown column leaves the host default")
-	require.Equal(t, "Personal / Dev / default column", p.label())
+	require.Equal(t, "Personal / Dev / Backlog", p.label(), "the reply names the start column the host files into")
 
 	p, err = topo.resolve(triageDecision{WorkspaceID: "ws-1", WorkflowID: "wf-2"})
 	require.NoError(t, err)
