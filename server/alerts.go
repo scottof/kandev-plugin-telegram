@@ -316,16 +316,22 @@ func (b *bot) deliver(ctx context.Context, userID int64, msg outMessage) (settle
 	}
 }
 
-// sendAlert sends msg to one user. When Telegram rejects the message with
+// sendAlert sends msg to one user, falling back to plain text as
+// sendWithFallback describes.
+func (b *bot) sendAlert(ctx context.Context, userID int64, msg outMessage) (degraded, err error) {
+	return b.sendWithFallback(ctx, userID, msg, 0)
+}
+
+// sendWithFallback sends msg to chatID. When Telegram rejects the message with
 // 400 and it has URL buttons, the buttons are the likely cause (for example a
 // loopback kandev_url), so the text goes out once more without them; degraded
 // is then the original rejection. A 400 from that retry is returned as err.
-func (b *bot) sendAlert(ctx context.Context, userID int64, msg outMessage) (degraded, err error) {
-	err = b.tg.SendMessage(ctx, userID, msg, 0)
+func (b *bot) sendWithFallback(ctx context.Context, chatID int64, msg outMessage, replyTo int64) (degraded, err error) {
+	err = b.tg.SendMessage(ctx, chatID, msg, replyTo)
 	if err == nil || !isBadRequest(err) || len(msg.Buttons) == 0 {
 		return nil, err
 	}
-	if plainErr := b.tg.SendMessage(ctx, userID, outMessage{Text: msg.Text}, 0); plainErr != nil {
+	if plainErr := b.tg.SendMessage(ctx, chatID, outMessage{Text: msg.Text}, replyTo); plainErr != nil {
 		return nil, plainErr
 	}
 	return err, nil

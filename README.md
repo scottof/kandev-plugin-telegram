@@ -93,7 +93,7 @@ make verify-package
 Install the resulting `kandev-plugin-telegram-<version>.tar.gz` from Settings > Plugins, or:
 
 ```sh
-curl -F package=@kandev-plugin-telegram-0.1.0.tar.gz "$KANDEV_URL/api/plugins/install"
+curl -F package=@kandev-plugin-telegram-0.1.1.tar.gz "$KANDEV_URL/api/plugins/install"
 ```
 
 ## Development

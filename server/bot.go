@@ -95,9 +95,14 @@ func (b *bot) now() string {
 }
 
 // reply answers msg in its chat. Send errors are logged, never returned: one
-// failed reply must not stop the update batch.
+// failed reply must not stop the update batch. A reply whose link buttons
+// Telegram refuses still goes out as plain text.
 func (b *bot) reply(ctx context.Context, msg *tgMessage, out outMessage) {
-	if err := b.tg.SendMessage(ctx, msg.Chat.ID, out, msg.MessageID); err != nil && ctx.Err() == nil {
+	degraded, err := b.sendWithFallback(ctx, msg.Chat.ID, out, msg.MessageID)
+	if err != nil && ctx.Err() == nil {
 		log.Printf("telegram: replying: %v", err)
+	}
+	if degraded != nil {
+		log.Printf("telegram: reply sent without buttons: %v", degraded)
 	}
 }

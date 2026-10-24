@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.1] - 2026-10-24
+
+### Fixed
+
+- `/status` and `/new` replies no longer vanish when Telegram refuses their link buttons, for example when the kandev
+  URL is `localhost`. The reply goes out again as plain text, as alerts already did.
+
 ## [0.1.0] - 2026-10-18
 
 First release, started from `kdlbs/kandev-plugin-template`.

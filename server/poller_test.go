@@ -244,3 +244,35 @@ func TestPollLoop_StopsWhileRetryingOffsetRead(t *testing.T) {
 	b.pollLoop(ctx)
 	require.Empty(t, tg.offsets(), "it never polls without a known offset")
 }
+
+func TestPollOnce_RepliesWithoutButtonsWhenTelegramRefusesThem(t *testing.T) {
+	b, host, tg := newTriageBot(t)
+	host.data().agentReply = `{"workspace_id":"ws-1","workflow_id":"wf-1","title":"Write docs"}`
+	tg.sendErrWithButtons = badRequest("Bad Request: inline keyboard button URL is invalid")
+	tg.queueUpdates(privateText(1, 42, "/status"), privateText(2, 42, "/new write the docs"))
+
+	_, err := b.pollOnce(context.Background(), 0)
+	require.NoError(t, err)
+	sent := tg.sentMessages()
+	require.Len(t, sent, 2, "both replies arrive although their buttons were refused")
+	for i, m := range sent {
+		require.Empty(t, m.Msg.Buttons)
+		require.Equal(t, int64(42), m.ChatID)
+		require.Equal(t, int64((i+1)*10), m.ReplyTo, "the plain-text retry still replies to the command")
+	}
+	require.Contains(t, sent[1].Msg.Text, "KAN-7 Write docs")
+	require.Equal(t, 4, tg.sendAttempts(), "one refused try and one plain retry per reply")
+}
+
+func TestPollOnce_ReplyKeepsButtonsWhenTelegramAcceptsThem(t *testing.T) {
+	tg := newFakeTelegram()
+	b := newTestBot(t, newFakeHost(), tg)
+	tg.queueUpdates(privateText(1, 42, "/status"))
+
+	_, err := b.pollOnce(context.Background(), 0)
+	require.NoError(t, err)
+	sent := tg.sentMessages()
+	require.Len(t, sent, 1)
+	require.NotEmpty(t, sent[0].Msg.Buttons, "the inbox link button is kept")
+	require.Equal(t, 1, tg.sendAttempts())
+}
