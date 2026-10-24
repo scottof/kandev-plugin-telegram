@@ -2,7 +2,7 @@
 # Makefile BIN and the id passed to window.registerKandevPlugin in ui/bundle.js.
 id: "kandev-plugin-telegram"
 api_version: 1
-version: "0.1.5"
+version: "0.1.6"
 display_name: "Telegram"
 description: "Telegram bot for kandev: alerts with task links when an agent waits on a human or a task ends, Mute and Done buttons, /new to file a task through a triage agent, /status, /task, quiet hours, and a notify_user tool agents can call."
 author: "scottof"

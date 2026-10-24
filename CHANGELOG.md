@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.6] - 2026-10-24
+
+### Changed
+
+- Built against the kandev v0.98.0 SDK. The plugin packages it uses are unchanged from v0.97.0, so behavior is the
+  same, and kandev 0.95.0 or newer is still supported.
+
 ## [0.1.5] - 2026-10-24
 
 ### Added
