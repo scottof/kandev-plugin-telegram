@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.1.2] - 2026-10-24
+
+### Changed
+
+- `/new` falls back to the workspace's default agent when neither the Triage agent profile nor a utility agent
+  default is set and kandev has a single workspace.
+- A failed triage says which setting to fix (Settings > Plugins > Telegram or Settings > Utility Agents) instead of
+  showing the raw kandev error.
+
 ## [0.1.1] - 2026-10-24
 
 ### Fixed

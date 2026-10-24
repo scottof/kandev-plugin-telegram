@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/kandev/kandev/pkg/pluginsdk"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 const (
@@ -29,10 +31,11 @@ type topology struct {
 }
 
 type topoWorkspace struct {
-	ID           string         `json:"id"`
-	Name         string         `json:"name"`
-	Workflows    []topoWorkflow `json:"workflows"`
-	Repositories []string       `json:"repositories,omitempty"`
+	ID                    string         `json:"id"`
+	Name                  string         `json:"name"`
+	Workflows             []topoWorkflow `json:"workflows"`
+	Repositories          []string       `json:"repositories,omitempty"`
+	defaultAgentProfileID string         `json:"-"`
 }
 
 type topoWorkflow struct {
@@ -57,6 +60,9 @@ func readTopology(ctx context.Context, host pluginsdk.Host) (topology, error) {
 	workflowCount := 0
 	for _, ws := range workspaces {
 		tw := topoWorkspace{ID: ws.ID, Name: ws.Name}
+		if ws.DefaultAgentProfileID != nil {
+			tw.defaultAgentProfileID = *ws.DefaultAgentProfileID
+		}
 		workflows, _, err := host.Workflows().List(ctx, ws.ID, pluginsdk.Page{Limit: topologyPageSize})
 		if err != nil {
 			return topology{}, fmt.Errorf("listing workflows: %w", err)
@@ -251,11 +257,7 @@ func (b *bot) triage(ctx context.Context, req triageRequest) (triageDecision, pl
 	if err != nil {
 		return triageDecision{}, placement{}, err
 	}
-	var opts []pluginsdk.UtilityAgentOptions
-	if b.cfg.TriageAgentProfile != "" {
-		opts = append(opts, pluginsdk.UtilityAgentOptions{ProfileID: b.cfg.TriageAgentProfile})
-	}
-	resp, err := b.host.InvokeUtilityAgent(ctx, prompt, opts...)
+	resp, err := b.invokeTriageAgent(ctx, topo, prompt)
 	if err != nil {
 		return triageDecision{}, placement{}, err
 	}
@@ -265,6 +267,54 @@ func (b *bot) triage(ctx context.Context, req triageRequest) (triageDecision, pl
 	}
 	place, err := topo.resolve(decision)
 	return decision, place, err
+}
+
+var (
+	errNoTriageProfile = errors.New("no agent profile for /new: pick a Triage agent profile in Settings > Plugins > " +
+		"Telegram, or a default in Settings > Utility Agents")
+	errPluginProfileUnusable = errors.New("the Triage agent profile set in Settings > Plugins > Telegram cannot " +
+		"answer one-shot requests (it must be enabled, global and not a CLI passthrough): pick another one")
+	errWorkspaceDefaultUnusable = errors.New("the workspace's default agent cannot answer one-shot requests: pick a " +
+		"Triage agent profile in Settings > Plugins > Telegram, or a default in Settings > Utility Agents")
+)
+
+// invokeTriageAgent picks the profile for /new. The plugin setting wins. Without
+// it kandev resolves its utility default, and only when kandev has none
+// (FailedPrecondition) does a single workspace's default agent stand in: that
+// profile is meant for task sessions, so it is the last resort. With several
+// workspaces there is no single default to choose.
+func (b *bot) invokeTriageAgent(ctx context.Context, topo topology, prompt string) (string, error) {
+	if b.cfg.TriageAgentProfile != "" {
+		resp, err := b.host.InvokeUtilityAgent(ctx, prompt, pluginsdk.UtilityAgentOptions{ProfileID: b.cfg.TriageAgentProfile})
+		if isFailedPrecondition(err) {
+			return "", errPluginProfileUnusable
+		}
+		return resp, err
+	}
+	resp, err := b.host.InvokeUtilityAgent(ctx, prompt)
+	if !isFailedPrecondition(err) {
+		return resp, err
+	}
+	fallback := topo.singleWorkspaceDefaultProfile()
+	if fallback == "" {
+		return "", errNoTriageProfile
+	}
+	resp, err = b.host.InvokeUtilityAgent(ctx, prompt, pluginsdk.UtilityAgentOptions{ProfileID: fallback})
+	if isFailedPrecondition(err) {
+		return "", errWorkspaceDefaultUnusable
+	}
+	return resp, err
+}
+
+func (t topology) singleWorkspaceDefaultProfile() string {
+	if len(t.Workspaces) != 1 {
+		return ""
+	}
+	return t.Workspaces[0].defaultAgentProfileID
+}
+
+func isFailedPrecondition(err error) bool {
+	return err != nil && status.Code(err) == codes.FailedPrecondition
 }
 
 func senderName(u *tgUser) string {

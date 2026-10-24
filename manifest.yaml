@@ -2,7 +2,7 @@
 # Makefile BIN and the id passed to window.registerKandevPlugin in ui/bundle.js.
 id: "kandev-plugin-telegram"
 api_version: 1
-version: "0.1.1"
+version: "0.1.2"
 display_name: "Telegram"
 description: "Telegram bot for kandev: alerts with task links when an agent waits on a human or a task ends, /new to file a task through a triage agent, and /status."
 author: "scottof"
@@ -67,7 +67,7 @@ config_schema:
       type: string
       format: agent-profile
       title: "Triage agent profile"
-      description: "Agent profile /new uses to place a task. Not set uses the default from Settings > Utility Agents."
+      description: "Agent profile /new uses to place a task. Not set uses the default from Settings > Utility Agents, or, when that is not set either and there is only one workspace, that workspace's default agent."
     start_agent:
       type: boolean
       title: "Start an agent on tasks filed with /new"

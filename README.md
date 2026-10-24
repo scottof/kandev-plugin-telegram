@@ -29,7 +29,7 @@ Requires kandev 0.95.0 or newer.
    | Bot token | The token from BotFather. It is stored in kandev's encrypted vault. |
    | Allowed Telegram user ids | Comma-separated ids from step 2. Messages from anyone else are ignored without a reply. Empty means the bot answers nobody. |
    | kandev URL | The base URL your phone uses to open kandev, for example `https://my-laptop.tailnet-name.ts.net:38429` over Tailscale. It is only used to build links, and must not contain a user name, password, query string or fragment. A `localhost` address works for the settings check but not on a phone, and the status card warns about it. |
-   | Triage agent profile | The agent profile `/new` uses. Not set means the default from Settings > Utility Agents. |
+   | Triage agent profile | The agent profile `/new` uses. Not set means the default from Settings > Utility Agents; when that is not set either and kandev has a single workspace, the workspace's default agent is used. The profile must be enabled, global and not a CLI passthrough. |
    | Start an agent on tasks filed with /new | Off by default. When on, the text of a message you reply to also reaches the triage prompt, so do not reply to forwarded text you do not trust. |
    | Alert toggles | Waiting agents, completed tasks and failed tasks are on by default. Review alerts are off by default (see below). |
 
@@ -93,7 +93,7 @@ make verify-package
 Install the resulting `kandev-plugin-telegram-<version>.tar.gz` from Settings > Plugins, or:
 
 ```sh
-curl -F package=@kandev-plugin-telegram-0.1.1.tar.gz "$KANDEV_URL/api/plugins/install"
+curl -F package=@kandev-plugin-telegram-0.1.2.tar.gz "$KANDEV_URL/api/plugins/install"
 ```
 
 ## Development

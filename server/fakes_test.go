@@ -108,6 +108,10 @@ type fakeData struct {
 	agentErr     error
 	agentPrompts []string
 	agentOptions []pluginsdk.UtilityAgentOptions
+	// agentErrByProfile fails calls for one profile id ("" is a call without
+	// a profile, which kandev resolves to its utility default).
+	agentErrByProfile map[string]error
+	agentProfileCalls []string
 }
 
 func (h *fakeHost) data() *fakeData { return h.d }
@@ -142,6 +146,14 @@ func (h *fakeHost) InvokeUtilityAgent(_ context.Context, prompt string, options 
 	defer d.mu.Unlock()
 	d.agentPrompts = append(d.agentPrompts, prompt)
 	d.agentOptions = append(d.agentOptions, options...)
+	profileID := ""
+	if len(options) > 0 {
+		profileID = options[0].ProfileID
+	}
+	d.agentProfileCalls = append(d.agentProfileCalls, profileID)
+	if err, ok := d.agentErrByProfile[profileID]; ok {
+		return "", err
+	}
 	return d.agentReply, d.agentErr
 }
 
